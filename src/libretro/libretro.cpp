@@ -33,9 +33,14 @@
 #include "../gb/gbSGB.h"
 #include "../gb/gbSound.h"
 
-#define FRAMERATE  (16777216.0 / 280896.0) // 59.73
+#ifdef PORTANDROID
+#include "emu_retro.h"
+#define SAMPLERATE 44100.0
+#else
 #define SAMPLERATE 32768.0
+#endif
 
+#define FRAMERATE  (16777216.0 / 280896.0) // 59.73
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t poll_cb;
@@ -1401,7 +1406,9 @@ void retro_run(void)
         update_variables(false);
 
     poll_cb();
-
+#ifdef PORTANDROID
+	systemFrameSkip = cb_context.video_skip;
+#endif
     updateInput_SolarSensor();
     updateInput_MotionSensors();
 
