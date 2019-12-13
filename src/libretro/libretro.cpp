@@ -1418,6 +1418,13 @@ void retro_run(void)
         core->emuMain(core->emuCount);
 }
 
+#ifdef PORTANDROID
+int get_image_type()
+{
+	return (int)type;
+}
+#endif
+
 static unsigned serialize_size = 0;
 
 size_t retro_serialize_size(void)

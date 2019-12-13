@@ -127,7 +127,11 @@ struct retro_core_option_definition option_defs_us[] = {
         "(GB) Color Palette",
         "Set Game Boy palettes to use.",
         {
+            #ifdef PORTANDROID
+            { "standard", NULL },
+            #else
             { "black and white", NULL },
+            #endif        
             { "blue sea",     NULL },
             { "dark knight",  NULL },
             { "green forest", NULL },
