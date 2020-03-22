@@ -969,10 +969,11 @@ static void gb_init(void)
         log("Game supports SGB functions\n");
 }
 
-void retro_deinit(void)
-{
+void retro_deinit(void) {
     emulating = 0;
-    core->emuCleanUp();
+    if (core != NULL) {
+        core->emuCleanUp();
+    }
     soundShutdown();
 }
 
