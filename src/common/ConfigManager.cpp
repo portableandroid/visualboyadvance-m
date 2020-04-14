@@ -114,7 +114,7 @@ enum named_opts
 	OPT_WINDOW_POSITION_Y,
 	OPT_WINDOW_WIDTH,
 	OPT_SPEEDUP_THROTTLE,
-	OPT_SPEEDUP_FRAME_SKIP
+	OPT_NO_SPEEDUP_THROTTLE_FRAME_SKIP
 };
 
 #define SOUND_MAX_VOLUME 2.0
@@ -133,6 +133,8 @@ bool mirroringEnable = true;
 bool parseDebug = true;
 bool speedHack = false;
 bool speedup = false;
+bool gbaLcdFilter = true;
+bool gbLcdFilter = false;
 const char* aviRecordDir;
 const char* batteryDir;
 const char* biosFileNameGB;
@@ -193,7 +195,7 @@ int linkAuto;
 int linkHacks = 1;
 int linkMode;
 int linkNumPlayers;
-int linkTimeout = 1;
+int linkTimeout = 500;
 int maxScale;
 int mouseCounter = 0;
 int movieFrame;
@@ -246,7 +248,6 @@ int windowMaximized;
 int windowPositionX, bkpPosX = 0;
 int windowPositionY, bkpPosY = 0;
 uint32_t windowWidth;
-int winFlashSize;
 int winGbBorderOn;
 int winGbPrinterEnabled;
 int winPauseNextFrame;
@@ -255,8 +256,8 @@ uint32_t autoFrameSkipLastTime;
 uint32_t movieLastJoypad;
 uint32_t movieNextJoypad;
 uint32_t throttle = 100;
-uint32_t speedup_throttle = 0;
-uint32_t speedup_frame_skip = 9;
+uint32_t speedup_throttle = 100;
+bool speedup_throttle_frame_skip = true;
 
 const char* preparedCheatCodes[MAX_CHEATS];
 
@@ -390,8 +391,8 @@ struct option argOptions[] = {
 	{ "synchronize", required_argument, 0, OPT_SYNCHRONIZE },
 	{ "thread-priority", required_argument, 0, OPT_THREAD_PRIORITY },
 	{ "throttle", required_argument, 0, 'T' },
-	{ "speedup_throttle", required_argument, 0, OPT_SPEEDUP_THROTTLE },
-	{ "speedup_frame_skip", required_argument, 0, OPT_SPEEDUP_FRAME_SKIP },
+	{ "speedup-throttle", required_argument, 0, OPT_SPEEDUP_THROTTLE },
+	{ "no-speedup-throttle-frame-skip", no_argument, 0, OPT_NO_SPEEDUP_THROTTLE_FRAME_SKIP },
 	{ "triple-buffering", no_argument, &tripleBuffering, 1 },
 	{ "use-bios", no_argument, &useBios, 1 },
 	{ "use-bios-file-gb", no_argument, &useBiosFileGB, 1 },
@@ -499,10 +500,10 @@ void LoadConfig()
 	fsWidth = ReadPref("fsWidth", 800);
 	fullScreen = ReadPrefHex("fullScreen");
 	fullScreenStretch = ReadPref("stretch", 0);
-	gbBorderAutomatic = ReadPref("borderAutomatic", 0);
+	gbBorderAutomatic = ReadPref("borderAutomatic", 1);
 	gbBorderOn = ReadPrefHex("borderOn");
 	gbColorOption = ReadPref("colorOption", 0);
-	gbEmulatorType = ReadPref("emulatorType", 1);
+	gbEmulatorType = ReadPref("emulatorType", 0);
 	gbFrameSkip = ReadPref("gbFrameSkip", 0);
 	gbPaletteOption = ReadPref("gbPaletteOption", 0);
 	gbSoundSetDeclicking(ReadPref("gbSoundDeclicking", 1));
@@ -521,12 +522,18 @@ void LoadConfig()
 	linkHostAddr = ReadPrefString("LinkHost", "localhost");
 	linkMode = ReadPref("LinkMode", 0); // LINK_DISCONNECTED = 0
 	linkNumPlayers = ReadPref("LinkNumPlayers", 2);
-	linkTimeout = ReadPref("LinkTimeout", 1);
+
+	linkTimeout = ReadPref("LinkTimeout", 500);
+
+	// Previous default was 1, which is very wrong.
+	if (linkTimeout <= 1)
+	    linkTimeout = 500;
+
 	loadDotCodeFile = ReadPrefString("loadDotCodeFile");
 	maxScale = ReadPref("maxScale", 0);
 	movieRecordDir = ReadPrefString("movieRecordDir");
 	openGL = ReadPrefHex("openGL");
-	optFlashSize = ReadPrefHex("flashSize");
+	optFlashSize = ReadPref("flashSize", 0);
 	pauseWhenInactive = ReadPref("pauseWhenInactive", 1);
 	recentFreeze = ReadPref("recentFreeze", 0);
 	rewindTimer = ReadPref("rewindTimer", 0);
@@ -547,8 +554,8 @@ void LoadConfig()
 	soundRecordDir = ReadPrefString("soundRecordDir");
 	threadPriority = ReadPref("priority", 2);
 	throttle = ReadPref("throttle", 100);
-        speedup_throttle = ReadPref("speedup_throttle", 0);
-        speedup_frame_skip = ReadPref("speedup_frame_skip", 9);
+	speedup_throttle = ReadPref("speedupThrottle", 100);
+	speedup_throttle_frame_skip = ReadPref("speedupThrottleFrameSkip", 1);
 	tripleBuffering = ReadPref("tripleBuffering", 0);
 	useBios = ReadPrefHex("useBiosGBA");
 	useBiosFileGB = ReadPref("useBiosGB", 0);
@@ -561,7 +568,6 @@ void LoadConfig()
 	windowPositionX = ReadPref("windowX", -1);
 	windowPositionY = ReadPref("windowY", -1);
 	windowWidth = ReadPref("windowWidth", 0);
-	winFlashSize = ReadPref("flashSize", 0x10000);
 	winGbBorderOn = ReadPref("borderOn", 0);
 	winGbPrinterEnabled = ReadPref("gbPrinter", 0);
 
@@ -1326,6 +1332,8 @@ int ReadOpts(int argc, char ** argv)
 			// --opt-flash-size
 			if (optarg) {
 				optFlashSize = atoi(optarg);
+                                if (optFlashSize < 0 || optFlashSize > 1)
+                                    optFlashSize = 0;
 			}
 			break;
 
@@ -1356,9 +1364,8 @@ int ReadOpts(int argc, char ** argv)
                         if (optarg)
                             speedup_throttle = atoi(optarg);
                         break;
-                case OPT_SPEEDUP_FRAME_SKIP:
-                        if (optarg)
-                            speedup_frame_skip = atoi(optarg);
+                case OPT_NO_SPEEDUP_THROTTLE_FRAME_SKIP:
+			speedup_throttle_frame_skip = false;
                         break;
 		}
 	}

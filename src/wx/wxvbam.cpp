@@ -205,8 +205,7 @@ static void init_check_for_updates()
 {
 #ifdef __WXMSW__
     wxString version(vbam_version);
-    //win_sparkle_set_appcast_url("https://github.com/visualboyadvance-m/visualboyadvance-m/data/appcast.xml");
-    win_sparkle_set_appcast_url("https://raw.githubusercontent.com/visualboyadvance-m/visualboyadvance-m/update-checker/data/appcast.xml");
+    win_sparkle_set_appcast_url("http://data.vba-m.com/appcast.xml");
     win_sparkle_set_app_details(L"visualboyadvance-m", L"VisualBoyAdvance-M", version.wc_str());
     win_sparkle_init();
 #endif // __WXMSW__
@@ -1111,10 +1110,10 @@ void MainFrame::MenuPopped(wxMenuEvent& evt)
     if (popped)
         panel->ShowPointer();
 
-    if (menus_opened)
-        panel->Pause();
-    else if (!IsPaused())
-        panel->Resume();
+    //if (menus_opened)
+    //    panel->Pause();
+    //else if (!IsPaused())
+    //    panel->Resume();
 }
 
 void MainFrame::SetMenusOpened(bool state)
@@ -1156,7 +1155,7 @@ void MainFrame::StartModal()
     // pointer when dialog popped up
     // it will auto-hide again once game resumes
     panel->ShowPointer();
-    panel->Pause();
+    //panel->Pause();
     ++dialog_opened;
 }
 

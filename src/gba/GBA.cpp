@@ -1,3 +1,4 @@
+#include <cmath>
 #include <memory.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -457,6 +458,23 @@ variable_desc saveGameStruct[] = {
 };
 
 static int romSize = SIZE_ROM;
+
+void gbaUpdateRomSize(int size)
+{
+    // Only change memory block if new size is larger
+    if (size > romSize) {
+        romSize = size;
+
+        uint8_t* tmp = (uint8_t*)realloc(rom, SIZE_ROM);
+        rom = tmp;
+
+        uint16_t* temp = (uint16_t*)(rom + ((romSize + 1) & ~1));
+        for (int i = (romSize + 1) & ~1; i < SIZE_ROM; i += 2) {
+            WRITE16LE(temp, (i >> 1) & 0xFFFF);
+            temp++;
+        }
+    }
+}
 
 #ifdef PROFILING
 void cpuProfil(profile_segment* seg)
@@ -1506,7 +1524,7 @@ int CPULoadRom(const char* szFile)
 
     uint16_t* temp = (uint16_t*)(rom + ((romSize + 1) & ~1));
     int i;
-    for (i = (romSize + 1) & ~1; i < romSize; i += 2) {
+    for (i = (romSize + 1) & ~1; i < SIZE_ROM; i += 2) {
         WRITE16LE(temp, (i >> 1) & 0xFFFF);
         temp++;
     }
@@ -1695,9 +1713,29 @@ const char* GetSaveDotCodeFile()
     return saveDotCodeFile;
 }
 
+void ResetLoadDotCodeFile()
+{
+	if(loadDotCodeFile)
+	{
+        free((char*)loadDotCodeFile);
+    }
+
+    loadDotCodeFile = strdup("");
+}
+
 void SetLoadDotCodeFile(const char* szFile)
 {
     loadDotCodeFile = strdup(szFile);
+}
+
+void ResetSaveDotCodeFile()
+{
+    if (saveDotCodeFile)
+    {
+        free((char*)saveDotCodeFile);
+    }
+
+    saveDotCodeFile = strdup("");
 }
 
 void SetSaveDotCodeFile(const char* szFile)
@@ -3755,25 +3793,28 @@ void CPULoop(int ticks)
                 } else {
                     int framesToSkip = systemFrameSkip;
 
-#ifndef __LIBRETRO__
                     static bool speedup_throttle_set = false;
+#ifndef __LIBRETRO__
                     static uint32_t last_throttle;
 
                     if ((joy >> 10) & 1) {
-                        if (speedup_throttle != 0) {
-                            if (!speedup_throttle_set && throttle != speedup_throttle) {
-                                last_throttle = throttle;
-                                throttle = speedup_throttle;
-                                soundSetThrottle(speedup_throttle);
-                                speedup_throttle_set = true;
+                        if (speedup_throttle != 100 && !speedup_throttle_set && throttle != speedup_throttle) {
+                            last_throttle = throttle;
+                            throttle = speedup_throttle;
+                            soundSetThrottle(speedup_throttle);
+                            speedup_throttle_set = true;
+                        }
+
+                        if (speedup_throttle_set) {
+                            if (speedup_throttle_frame_skip) {
+                                if (speedup_throttle == 0)
+                                    framesToSkip += 9;
+                                else if (speedup_throttle > 100)
+                                    framesToSkip += std::ceil(double(speedup_throttle) / 100.0) - 1;
                             }
                         }
-                        else {
-                            if (speedup_frame_skip)
-                                framesToSkip = speedup_frame_skip;
-
-                            speedup_throttle_set = false;
-                        }
+                        else
+                            framesToSkip = 9;
                     }
                     else if (speedup_throttle_set) {
                         throttle = last_throttle;
@@ -3818,11 +3859,7 @@ void CPULoop(int ticks)
 
                             speedup = false;
 
-#ifndef __LIBRETRO__
-                            if (ext & 1 && speedup_throttle == 0)
-#else
-                            if (ext & 1)
-#endif
+                            if (ext & 1 && !speedup_throttle_set)
                                 speedup = true;
 
                             capture = (ext & 2) ? true : false;
@@ -3847,8 +3884,10 @@ void CPULoop(int ticks)
                             if (frameCount >= framesToSkip) {
                                 systemDrawScreen();
                                 frameCount = 0;
-                            } else
+                            } else {
                                 frameCount++;
+                                systemSendScreen();
+                            }
                             if (systemPauseOnFrame())
                                 ticks = 0;
 

@@ -134,11 +134,15 @@ void GameArea::LoadGame(const wxString& name)
         if (!pfn.IsFileReadable()) {
             pfn.SetExt(wxT("ups"));
 
-            if (!pfn.IsFileReadable()) {
-                pfn.SetExt(wxT("ppf"));
-                loadpatch = pfn.IsFileReadable();
-            }
-        }
+			if (!pfn.IsFileReadable()) {
+				pfn.SetExt(wxT("bps"));
+
+				if (!pfn.IsFileReadable()) {
+					pfn.SetExt(wxT("ppf"));
+					loadpatch = pfn.IsFileReadable();
+				}
+			}
+		}
     }
 
     if (t == IMAGE_GB) {
@@ -168,7 +172,9 @@ void GameArea::LoadGame(const wxString& name)
         gb_effects_config.echo = (float)gopts.gb_echo / 100.0;
         gb_effects_config.stereo = (float)gopts.gb_stereo / 100.0;
         gbSoundSetDeclicking(gopts.gb_declick);
-        soundInit();
+        if (!soundInit()) {
+            wxLogError(_("Could not initialize the sound driver!"));
+        }
         soundSetEnable(gopts.sound_en);
         gbSoundSetSampleRate(!gopts.sound_qual ? 48000 : 44100 / (1 << (gopts.sound_qual - 1)));
         soundSetVolume((float)gopts.sound_vol / 100.0);
@@ -219,6 +225,8 @@ void GameArea::LoadGame(const wxString& name)
             int size = 0x2000000 < rom_size ? 0x2000000 : rom_size;
             applyPatch(pfn.GetFullPath().mb_str(), &rom, &size);
             // that means we no longer really know rom_size either <sigh>
+
+            gbaUpdateRomSize(size);
         }
 
         wxFileConfig* cfg = wxGetApp().overrides;
@@ -233,7 +241,7 @@ void GameArea::LoadGame(const wxString& name)
             int fsz = cfg->Read(wxT("flashSize"), (long)0);
 
             if (fsz != 0x10000 && fsz != 0x20000)
-                fsz = 0x10000 << winFlashSize;
+                fsz = 0x10000 << optFlashSize;
 
             flashSetSize(fsz);
             ovSaveType = cfg->Read(wxT("saveType"), cpuSaveType);
@@ -250,7 +258,7 @@ void GameArea::LoadGame(const wxString& name)
             cfg->SetPath(wxT("/"));
         } else {
             rtcEnable(rtcEnabled);
-            flashSetSize(0x10000 << winFlashSize);
+            flashSetSize(0x10000 << optFlashSize);
 
             if (cpuSaveType < 0 || cpuSaveType > 5)
                 cpuSaveType = 0;
@@ -265,7 +273,9 @@ void GameArea::LoadGame(const wxString& name)
 
         doMirroring(mirroringEnable);
         // start sound; this must happen before CPU stuff
-        soundInit();
+        if (!soundInit()) {
+            wxLogError(_("Could not initialize the sound driver!"));
+        }
         soundSetEnable(gopts.sound_en);
         soundSetSampleRate(!gopts.sound_qual ? 48000 : 44100 / (1 << (gopts.sound_qual - 1)));
         soundSetVolume((float)gopts.sound_vol / 100.0);
@@ -1068,7 +1078,14 @@ void GameArea::OnIdle(wxIdleEvent& event)
 
         // set focus to panel
         w->SetFocus();
+
+        // generate system color maps (after output module init)
+        if (loaded == IMAGE_GBA) utilUpdateSystemColorMaps(gbaLcdFilter);
+        else if (loaded == IMAGE_GB) utilUpdateSystemColorMaps(gbLcdFilter);
+        else utilUpdateSystemColorMaps(false);
     }
+
+    mf->PollJoysticks();
 
     if (!paused) {
         HidePointer();
@@ -1095,7 +1112,6 @@ void GameArea::OnIdle(wxIdleEvent& event)
             CheckLinkConnection();
 
 #endif
-        mf->PollJoysticks();
     } else {
         was_paused = true;
 
@@ -1457,10 +1473,6 @@ DrawingPanelBase::DrawingPanelBase(int _width, int _height)
         systemBlueShift = 0;
         RGB_LOW_BITS_MASK = 0x0421;
     }
-
-    // FIXME: should be "true" for GBA carts if lcd mode selected
-    // which means this needs to be re-run at pref change time
-    utilUpdateSystemColorMaps(false);
 }
 
 DrawingPanel::DrawingPanel(wxWindow* parent, int _width, int _height)
@@ -2208,34 +2220,62 @@ void GLDrawingPanel::DrawingPanelInit()
 #endif
     glClearColor(0.0, 0.0, 0.0, 1.0);
 // non-portable vsync code
-#if defined(__WXGTK__) && defined(GLX_SGI_swap_control)
-    static PFNGLXSWAPINTERVALSGIPROC si = NULL;
+#if defined(__WXGTK__)
+    static PFNGLXSWAPINTERVALEXTPROC glXSwapIntervalEXT = NULL;
+    static PFNGLXSWAPINTERVALSGIPROC glXSwapIntervalSGI = NULL;
+    static PFNGLXSWAPINTERVALMESAPROC glXSwapIntervalMESA = NULL;
 
-    if (!si)
-        si = (PFNGLXSWAPINTERVALSGIPROC)glXGetProcAddress((const GLubyte*)"glxSwapIntervalSGI");
+    char* glxQuery = (char*)glXQueryExtensionsString(glXGetCurrentDisplay(), 0);
 
-    if (si)
-        si(vsync);
+    if (strstr(glxQuery, "GLX_EXT_swap_control") != NULL)
+    {
+        glXSwapIntervalEXT = reinterpret_cast<PFNGLXSWAPINTERVALEXTPROC>(glXGetProcAddress((const GLubyte*)"glXSwapIntervalEXT"));
+        if (glXSwapIntervalEXT)
+            glXSwapIntervalEXT(glXGetCurrentDisplay(), glXGetCurrentDrawable(), vsync);
+        else
+            systemScreenMessage(_("Failed to set glXSwapIntervalEXT"));
+    }
+    if (strstr(glxQuery, "GLX_SGI_swap_control") != NULL)
+    {
+        glXSwapIntervalSGI = reinterpret_cast<PFNGLXSWAPINTERVALSGIPROC>(glXGetProcAddress((const GLubyte*)("glXSwapIntervalSGI")));
 
-#else
-#if defined(__WXMSW__) && defined(WGL_EXT_swap_control)
-    static PFNWGLSWAPINTERVALEXTPROC si = NULL;
+        if (glXSwapIntervalSGI)
+            glXSwapIntervalSGI(vsync);
+        else
+            systemScreenMessage(_("Failed to set glXSwapIntervalSGI"));
+    }
+    if (strstr(glxQuery, "GLX_MESA_swap_control") != NULL)
+    {
+        glXSwapIntervalMESA = reinterpret_cast<PFNGLXSWAPINTERVALMESAPROC>(glXGetProcAddress((const GLubyte*)("glXSwapIntervalMESA")));
 
-    if (!si)
-        si = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+        if (glXSwapIntervalMESA)
+            glXSwapIntervalMESA(vsync);
+        else
+            systemScreenMessage(_("Failed to set glXSwapIntervalMESA"));
+    }
+#elif defined(__WXMSW__)
+    typedef char* (*wglext)();
+    wglext wglGetExtensionsString = (wglext)wglGetProcAddress("wglGetExtensionsString");
+    if (wglGetExtensionsString == NULL || strstr(wglGetExtensionsString(), "WGL_EXT_swap_control") == 0) {
+        if (wglGetExtensionsString == NULL)
+            systemScreenMessage(_("No support for wglGetExtensionsString"));
+        else
+            systemScreenMessage(_("No support for WGL_EXT_swap_control"));
+    }
 
-    if (si)
-        si(vsync);
-
-#else
-#ifdef __WXMAC__
+    typedef bool (*PFNWGLSWAPINTERVALEXTPROC)(int);
+    static PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
+    wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+    if (wglSwapIntervalEXT)
+        wglSwapIntervalEXT(vsync);
+    else
+        systemScreenMessage(_("Failed to set wglSwapIntervalEXT"));
+#elif defined(__WXMAC__)
     int swap_interval = vsync ? 1 : 0;
     CGLContextObj cgl_context = CGLGetCurrentContext();
     CGLSetParameter(cgl_context, kCGLCPSwapInterval, &swap_interval);
 #else
-//#warning no vsync support on this platform
-#endif
-#endif
+    systemScreenMessage(_("No VSYNC available on this platform"));
 #endif
 }
 
@@ -2349,15 +2389,10 @@ static const wxString media_err(recording::MediaRet ret)
     }
 }
 
-int save_speedup_frame_skip;
-
 void GameArea::StartVidRecording(const wxString& fname)
 {
     recording::MediaRet ret;
 
-    // do not skip frames when recording
-    save_speedup_frame_skip = speedup_frame_skip;
-    speedup_frame_skip = 0;
     vid_rec.SetSampleRate(soundGetSampleRate());
     if ((ret = vid_rec.Record(fname.mb_str(), basic_width, basic_height,
              systemColorDepth))
@@ -2375,8 +2410,6 @@ void GameArea::StartVidRecording(const wxString& fname)
 void GameArea::StopVidRecording()
 {
     vid_rec.Stop();
-    // allow to skip frames again
-    speedup_frame_skip = save_speedup_frame_skip;
     MainFrame* mf = wxGetApp().frame;
     mf->cmd_enable &= ~CMDEN_VREC;
     mf->cmd_enable |= CMDEN_NVREC;

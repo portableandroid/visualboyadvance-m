@@ -837,11 +837,14 @@ EVT_HANDLER_MASK(RomInformation, "ROM information...", CMDEN_GB | CMDEN_GBA)
     }
 }
 
-static wxString loaddotcodefile_path;
-static wxString savedotcodefile_path;
-
-EVT_HANDLER_MASK(LoadDotCodeFile, "Load e-Reader Dot Code...", CMDEN_GBA)
+EVT_HANDLER_MASK(ResetLoadingDotCodeFile, "Reset Loading e-Reader Dot Code", CMDEN_GBA)
 {
+    ResetLoadDotCodeFile();
+}
+
+EVT_HANDLER_MASK(SetLoadingDotCodeFile, "Load e-Reader Dot Code...", CMDEN_GBA)
+{
+    static wxString loaddotcodefile_path;
     wxFileDialog dlg(this, _("Select Dot Code file"), loaddotcodefile_path, wxEmptyString,
         _(
                          "e-Reader Dot Code (*.bin;*.raw)|"
@@ -853,11 +856,17 @@ EVT_HANDLER_MASK(LoadDotCodeFile, "Load e-Reader Dot Code...", CMDEN_GBA)
         return;
 
     loaddotcodefile_path = dlg.GetPath();
-    SetLoadDotCodeFile(loaddotcodefile_path.mb_str(wxConvUTF8));
+    SetLoadDotCodeFile(loaddotcodefile_path.mb_str());
 }
 
-EVT_HANDLER_MASK(SaveDotCodeFile, "Save e-Reader Dot Code...", CMDEN_GBA)
+EVT_HANDLER_MASK(ResetSavingDotCodeFile, "Reset Saving e-Reader Dot Code", CMDEN_GBA)
 {
+    ResetLoadDotCodeFile();
+}
+
+EVT_HANDLER_MASK(SetSavingDotCodeFile, "Save e-Reader Dot Code...", CMDEN_GBA)
+{
+    static wxString savedotcodefile_path;
     wxFileDialog dlg(this, _("Select Dot Code file"), savedotcodefile_path, wxEmptyString,
         _(
                          "e-Reader Dot Code (*.bin;*.raw)|"
@@ -869,7 +878,7 @@ EVT_HANDLER_MASK(SaveDotCodeFile, "Save e-Reader Dot Code...", CMDEN_GBA)
         return;
 
     savedotcodefile_path = dlg.GetPath();
-    SetSaveDotCodeFile(savedotcodefile_path.mb_str(wxConvUTF8));
+    SetSaveDotCodeFile(savedotcodefile_path.mb_str());
 }
 
 static wxString batimp_path;
@@ -1197,7 +1206,7 @@ EVT_HANDLER_MASK(RecordSoundStartRecording, "Start sound recording...", CMDEN_NS
             ext.Replace(wxT(","), wxT(";*."));
             ext.insert(0, wxT("*."));
 
-            if (sound_extno < 0 && ext.find(wxT("*.mp3")) != wxString::npos)
+            if (sound_extno < 0 && ext.find(wxT("*.wav")) != wxString::npos)
                 sound_extno = extno;
 
             sound_exts.append(ext);
@@ -2658,7 +2667,10 @@ EVT_HANDLER_MASK(SoundConfigure, "Sound options...", CMDEN_NREC_ANY)
             // or init-only options
             (oapi == AUD_XAUDIO2 && oupmix != gopts.upmix) || (oapi == AUD_FAUDIO && oupmix != gopts.upmix) || (oapi == AUD_DIRECTSOUND && ohw != gopts.dsound_hw_accel))) {
         soundShutdown();
-        soundInit();
+
+        if (!soundInit()) {
+            wxLogError(_("Could not initialize the sound driver!"));
+        }
     }
 
     soundSetVolume((float)gopts.sound_vol / 100.0);
@@ -2748,7 +2760,7 @@ EVT_HANDLER(wxID_ABOUT, "About...")
     // setting website, icon, license uses custom aboutbox on win32 & macosx
     // but at least win32 standard about is nothing special
     ai.SetWebSite(wxT("http://www.vba-m.com/"));
-    ai.SetIcon(GetIcon());
+    ai.SetIcon(GetIcons().GetIcon(wxSize(32, 32), wxIconBundle::FALLBACK_NEAREST_LARGER));
     ai.SetDescription(_("Nintendo GameBoy (+Color+Advance) emulator."));
     ai.SetCopyright(_("Copyright (C) 1999-2003 Forgotten\nCopyright (C) 2004-2006 VBA development team\nCopyright (C) 2007-2017 VBA-M development team"));
     ai.SetLicense(_("This program is free software: you can redistribute it and/or modify\n"
@@ -2868,6 +2880,37 @@ EVT_HANDLER(GBSurround, "GB surround sound effect (%)")
 EVT_HANDLER(AGBPrinter, "Enable AGB printer")
 {
     GetMenuOptionInt("AGBPrinter", agbPrint, 1);
+    update_opts();
+}
+
+EVT_HANDLER_MASK(GBALcdFilter, "Enable LCD filter", CMDEN_GBA)
+{
+    bool menuPress;
+    GetMenuOptionBool("GBALcdFilter", menuPress);
+    toggleBooleanVar(&menuPress, &gbaLcdFilter);
+    SetMenuOption("GBALcdFilter", gbaLcdFilter ? 1 : 0);
+    utilUpdateSystemColorMaps(gbaLcdFilter);
+    update_opts();
+}
+
+EVT_HANDLER_MASK(GBLcdFilter, "Enable LCD filter", CMDEN_GB)
+{
+    bool menuPress;
+    GetMenuOptionBool("GBLcdFilter", menuPress);
+    toggleBooleanVar(&menuPress, &gbLcdFilter);
+    SetMenuOption("GBLcdFilter", gbLcdFilter ? 1 : 0);
+    utilUpdateSystemColorMaps(gbLcdFilter);
+    update_opts();
+}
+
+EVT_HANDLER(GBColorOption, "Enable GB color option")
+{
+    bool menuPress;
+    bool intVar = gbColorOption ? true : false;
+    GetMenuOptionBool("GBColorOption", menuPress);
+    toggleBooleanVar(&menuPress, &intVar);
+    SetMenuOption("GBColorOption", intVar ? 1 : 0);
+    gbColorOption = intVar ? 1 : 0;
     update_opts();
 }
 

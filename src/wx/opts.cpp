@@ -208,6 +208,8 @@ opt_desc opts[] = {
 
     /// GB
     STROPT("GB/BiosFile", "", wxTRANSLATE("BIOS file to use for GB, if enabled"), gopts.gb_bios),
+    INTOPT("GB/ColorOption", "GBColorOption", wxTRANSLATE("GB color enhancement, if enabled"), gbColorOption, 0, 1),
+    BOOLOPT("GB/LCDFilter", "GBLcdFilter", wxTRANSLATE("Apply LCD filter, if enabled"), gbLcdFilter),
     STROPT("GB/GBCBiosFile", "", wxTRANSLATE("BIOS file to use for GBC, if enabled"), gopts.gbc_bios),
     NOOPT(wxT("GB/Palette0"), "", wxTRANSLATE("The default palette, as 8 comma-separated 4-digit hex integers (rgb555).")),
     NOOPT(wxT("GB/Palette1"), "", wxTRANSLATE("The first user palette, as 8 comma-separated 4-digit hex integers (rgb555).")),
@@ -219,10 +221,13 @@ opt_desc opts[] = {
 
     /// GBA
     STROPT("GBA/BiosFile", "", wxTRANSLATE("BIOS file to use, if enabled"), gopts.gba_bios),
+    BOOLOPT("GBA/LCDFilter", "GBALcdFilter", wxTRANSLATE("Apply LCD filter, if enabled"), gbaLcdFilter),
 #ifndef NO_LINK
     BOOLOPT("GBA/LinkAuto", "LinkAuto", wxTRANSLATE("Enable link at boot"), gopts.link_auto),
     INTOPT("GBA/LinkFast", "SpeedOn", wxTRANSLATE("Enable faster network protocol by default"), linkHacks, 0, 1),
     STROPT("GBA/LinkHost", "", wxTRANSLATE("Default network link client host"), gopts.link_host),
+    STROPT("GBA/ServerIP", "", wxTRANSLATE("Default network link server IP to bind"), gopts.server_ip),
+    UINTOPT("GBA/LinkPort", "", wxTRANSLATE("Default network link port (server and client)"), gopts.link_port, 0, 65535),
     INTOPT("GBA/LinkProto", "LinkProto", wxTRANSLATE("Default network protocol"), gopts.link_proto, 0, 1),
     INTOPT("GBA/LinkTimeout", "LinkTimeout", wxTRANSLATE("Link timeout (ms)"), linkTimeout, 0, 9999999),
     INTOPT("GBA/LinkType", "LinkType", wxTRANSLATE("Link cable type"), gopts.gba_link_type, 0, 5),
@@ -287,7 +292,7 @@ opt_desc opts[] = {
     INTOPT("preferences/skipSaveGameBattery", "", wxTRANSLATE("Do not overwrite native (battery) save when loading state"), skipSaveGameBattery, 0, 1),
     UINTOPT("preferences/throttle", "", wxTRANSLATE("Throttle game speed, even when accelerated (0-500%, 0 = no throttle)"), throttle, 0, 600),
     UINTOPT("preferences/speedupThrottle", "", wxTRANSLATE("Set throttle for speedup key (0-600%, 0 = no throttle)"), speedup_throttle, 0, 600),
-    UINTOPT("preferences/speedupFrameSkip", "", wxTRANSLATE("Set frame skip for speedup key (0-30)"), speedup_frame_skip, 0, 30),
+    BOOLOPT("preferences/speedupThrottleFrameSkip", "", wxTRANSLATE("Use frame skip for speedup throttle"), speedup_throttle_frame_skip),
     INTOPT("preferences/useBiosGB", "BootRomGB", wxTRANSLATE("Use the specified BIOS file for GB"), useBiosFileGB, 0, 1),
     INTOPT("preferences/useBiosGBA", "BootRomEn", wxTRANSLATE("Use the specified BIOS file"), useBiosFileGBA, 0, 1),
     INTOPT("preferences/useBiosGBC", "BootRomGBC", wxTRANSLATE("Use the specified BIOS file for GBC"), useBiosFileGBC, 0, 1),
@@ -359,6 +364,8 @@ opts_t::opts_t()
     autoPatch = true;
     // quick fix for issues #48 and #445
     link_host = "127.0.0.1";
+    server_ip = "*";
+    link_port = 5738;
 }
 
 // for binary_search() and friends
@@ -562,7 +569,7 @@ void load_opts()
             cfg->Read(opt.opt, &opt.curint, *opt.intopt);
 
             if (opt.curint < opt.min || opt.curint > opt.max) {
-                wxLogWarning(_("Invalid value %d for option %s; valid values are %d - %d"), opt.curint, opt.opt.c_str(), opt.min, opt.max);
+                wxLogWarning(_("Invalid value %d for option %s; valid values are %d - %d"), opt.curint, opt.opt.c_str(), int(opt.min), int(opt.max));
             } else
                 *opt.intopt = opt.curint;
         } else if (opt.doubleopt) {
@@ -670,6 +677,10 @@ void load_opts()
             }
         }
     }
+
+    // Make sure linkTimeout is not set to 1, which was the previous default.
+    if (linkTimeout <= 1)
+        linkTimeout = 500;
 
     // recent is special
     // Recent does not get written with defaults

@@ -2,6 +2,10 @@ if(COMMAND cmake_policy)
     cmake_policy(SET CMP0003 NEW) # link to full path of libs
     cmake_policy(SET CMP0005 NEW) # escapes in add_definitions
 
+    if(POLICY CMP0074)
+        cmake_policy(SET CMP0074 NEW) # use Package_ROOT if set
+    endif()
+
     if(POLICY CMP0077)
         cmake_policy(SET CMP0077 NEW) # use vars for options
     endif()
@@ -13,10 +17,20 @@ endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
-set(VCPKG_DEPS zlib libpng SDL2 SFML gettext wxWidgets)
+if(UPDATE_APPCAST)
+    include(UpdateAppcast)
+endif()
 
-if(NOT DEFINED ENV{APPVEYOR})
-    # job goes over time limit if building ffmpeg
+if(TAG_RELEASE)
+    include(MakeReleaseCommitAndTag)
+endif()
+
+set(VCPKG_DEPS zlib SDL2 SFML gettext wxWidgets)
+
+# appveyor job goes over time limit if building ffmpeg during initial cache
+# generation. So build initial cache without ffmpeg.
+#if(NOT DEFINED ENV{APPVEYOR})
+if(1)
     list(APPEND VCPKG_DEPS ffmpeg)
 endif()
 
@@ -24,7 +38,7 @@ include(Set-Toolchain-vcpkg)
 
 set(VBAM_STATIC_DEFAULT OFF)
 
-if(VCPKG_TARGET_TRIPLET MATCHES -static OR CMAKE_TOOLCHAIN_FILE MATCHES mxe)
+if(VCPKG_TARGET_TRIPLET MATCHES -static OR CMAKE_TOOLCHAIN_FILE MATCHES "mxe|-static")
     set(VBAM_STATIC_DEFAULT ON)
 endif()
 
@@ -60,21 +74,17 @@ if(VBAM_STATIC)
     set(FFMPEG_STATIC ON)
     set(SSP_STATIC ON)
     set(OPENAL_STATIC ON)
+    set_property(GLOBAL PROPERTY LINK_SEARCH_START_STATIC ON)
+    set_property(GLOBAL PROPERTY LINK_SEARCH_END_STATIC   ON)
+
+    if(NOT MSVC)
+        list(INSERT CMAKE_FIND_LIBRARY_SUFFIXES 0 .a)
+    endif()
 endif()
-
-set(ENABLE_BUNDLED_LIBS_DEFAULT OFF)
-
-# on visual studio use all bundled stuff
-if(MSVC)
-    set(ENABLE_BUNDLED_LIBS_DEFAULT ON)
-endif()
-
-# XXX: do some stuff with this
-#option(ENABLE_BUNDLED_LIBS "Use bundled libraries instead of system libraries" ${ENABLE_BUNDLED_LIBS_DEFAULT})
 
 # use ccache if available, and not already enabled on the command line
 # but not with ninja and msys ccache on msys2
-if(NOT (WIN32 AND (NOT $ENV{MSYSTEM} STREQUAL "") AND CMAKE_GENERATOR STREQUAL Ninja))
+if(NOT (WIN32 AND NOT "$ENV{MSYSTEM_PREFIX}" STREQUAL "" AND CMAKE_GENERATOR STREQUAL Ninja))
     if(NOT CMAKE_CXX_COMPILER_LAUNCHER AND NOT CMAKE_C_COMPILER_LAUNCHER)
         find_program(CCACHE_FOUND ccache)
         if(CCACHE_FOUND)
@@ -121,7 +131,7 @@ if(WIN32 AND ((NOT (MINGW AND MSYS)) OR CMAKE_TOOLCHAIN_FILE MATCHES mxe) AND NO
     set(SFML_STATIC_LIBRARIES TRUE)
 endif()
 
-find_package(SFML 2 COMPONENTS network system)
+find_package(SFML 2.4 COMPONENTS network system)
 
 if(SFML_FOUND)
     set(ENABLE_LINK_DEFAULT ON)
@@ -151,25 +161,23 @@ macro(check_ffmpeg_component_versions)
     endif()
 endmacro()
 
-set(FFMPEG_DEFAULT ON)
+if(((NOT DEFINED ENABLE_FFMPEG) AND (NOT (WIN32 AND X86))) OR ENABLE_FFMPEG)
+    set(FFMPEG_DEFAULT ON)
 
-find_package(FFmpeg COMPONENTS ${FFMPEG_COMPONENTS})
-check_ffmpeg_component_versions()
+    find_package(FFmpeg COMPONENTS ${FFMPEG_COMPONENTS})
+    check_ffmpeg_component_versions()
 
-if(NOT FFMPEG_FOUND)
-    set(FFMPEG_DEFAULT OFF)
+    if(NOT FFMPEG_FOUND)
+        set(FFMPEG_DEFAULT OFF)
+    endif()
 endif()
 
 option(ENABLE_FFMPEG "Enable ffmpeg A/V recording" ${FFMPEG_DEFAULT})
 
 set(ONLINEUPDATES_DEFAULT OFF)
 
-if(WIN32 AND (AMD64 OR X86_32))
-
-# currently we do not turn this on until we do more work on this feature
-#
-#  set(ONLINEUPDATES_DEFAULT ON) # use winsparkle
-
+if(WIN32 AND (X64 OR X86))
+    set(ONLINEUPDATES_DEFAULT ON) # use winsparkle
 endif()
 
 option(ENABLE_ONLINEUPDATES "Enable online update checks" ${ONLINEUPDATES_DEFAULT})
@@ -178,7 +186,7 @@ set(LTO_DEFAULT ON)
 
 # gcc lto produces buggy binaries for 64 bit mingw
 # and we generally don't want it when debugging because it makes linking slow
-if(CMAKE_BUILD_TYPE MATCHES Debug OR (WIN32 AND CMAKE_COMPILER_IS_GNUCXX AND AMD64))
+if(CMAKE_BUILD_TYPE MATCHES Debug OR (WIN32 AND CMAKE_COMPILER_IS_GNUCXX))
     set(LTO_DEFAULT OFF)
 endif()
 
@@ -238,6 +246,46 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
     # of files that depend on version.h
     include(GetGitRevisionDescription)
     get_git_head_revision(REFSPEC COMMITHASH)
+
+    # Make sure old tags are gone from all clones.
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} tag -l
+        OUTPUT_VARIABLE git_tags
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+
+    string(REGEX REPLACE ";"     "\\\\;" git_tags_lines "${git_tags}")
+    string(REGEX REPLACE "\r?\n" ";"     git_tags_lines "${git_tags_lines}")
+
+    set(found_old_tags FALSE)
+
+    foreach(tag ${git_tags_lines})
+        if(NOT tag MATCHES "^v[0-9]")
+            set(found_old_tags TRUE)
+            break()
+        endif()
+    endforeach()
+
+    if(found_old_tags)
+        # Delete all tags and fetch them from the origin.
+
+        foreach(tag ${git_tags_lines})
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} tag -d ${tag}
+                OUTPUT_QUIET
+                ERROR_QUIET
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            )
+        endforeach()
+
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} fetch --tags origin
+            OUTPUT_QUIET
+            ERROR_QUIET
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        )
+    endif()
 endif()
 
 # no git or no tags, use ChangeLog
@@ -258,7 +306,7 @@ else()
 endif()
 
 # hack for ninja in msys2
-if(WIN32 AND CMAKE_GENERATOR STREQUAL Ninja AND (NOT $ENV{MSYSTEM} STREQUAL ""))
+if(WIN32 AND CMAKE_GENERATOR STREQUAL Ninja AND NOT "$ENV{MSYSTEM_PREFIX}" STREQUAL "")
     set(MSYS ON)
 endif()
 
@@ -273,7 +321,23 @@ if(AMD64 AND (ENABLE_ASM_CORE OR ENABLE_ASM_SCALERS OR ENABLE_MMX))
 endif()
 
 if(ENABLE_ASM_CORE OR ENABLE_ASM_SCALERS)
+    if(MSVC)
+        if(NOT EXISTS ${CMAKE_BINARY_DIR}/nuget.exe)
+            file(DOWNLOAD "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" ${CMAKE_BINARY_DIR}/nuget.exe)
+        endif()
+
+        execute_process(
+            COMMAND nuget.exe install nasm2 -OutputDirectory ${CMAKE_BINARY_DIR}/nuget
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+
+        file(GLOB pkg ${CMAKE_BINARY_DIR}/nuget/nasm2*)
+
+        list(APPEND CMAKE_PROGRAM_PATH ${pkg}/tools)
+    endif()
+
     enable_language(ASM_NASM)
+
     set(ASM_ENABLED ON)
 endif()
 
@@ -287,7 +351,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
 endif()
 
 find_package(OpenGL REQUIRED)
-find_package(PNG    REQUIRED)
 find_package(SDL2   REQUIRED)
 
 if(WIN32)
@@ -303,7 +366,6 @@ set(
     ${SFML_LIBRARIES}
     ${OPENGL_LIBRARIES}
     ${ZLIB_LIBRARY}
-    ${PNG_LIBRARY}
 )
 
 if(ENABLE_FFMPEG)
@@ -378,11 +440,7 @@ if(NOT ENABLE_ASM_CORE)
     add_definitions(-DC_CORE)
 endif()
 
-set(NLS_DEFAULT OFF)
-
-if(NOT CMAKE_TOOLCHAIN_FILE MATCHES vcpkg)
-    set(NLS_DEFAULT ON)
-endif()
+set(NLS_DEFAULT ON)
 
 option(ENABLE_NLS "Enable translations" ${NLS_DEFAULT})
 
@@ -400,17 +458,22 @@ if(ENABLE_NLS)
             set(CMAKE_PROGRAM_PATH "${CMAKE_PROGRAM_PATH};/usr/local/opt/gettext/bin")
         endif()
     endif()
-    if(ENABLE_LINK)
+    if(ENABLE_LINK OR ENABLE_WX)
         find_path(LIBINTL_INC libintl.h)
-        find_library(LIBINTL_LIB intl)
-        find_library(LIBICONV_LIB iconv)
+        find_library(LIBINTL_LIB    NAMES libintl    intl)
+        find_library(LIBICONV_LIB   NAMES libiconv   iconv)
+        find_library(LIBCHARSET_LIB NAMES libcharset charset)
         if(LIBINTL_LIB)
-            set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${LIBINTL_LIB})
-            set(VBAMCORE_LIBS ${VBAMCORE_LIBS} ${LIBINTL_LIB})
+            list(APPEND CMAKE_REQUIRED_LIBRARIES ${LIBINTL_LIB})
+            list(APPEND VBAMCORE_LIBS            ${LIBINTL_LIB})
         endif()
         if(LIBICONV_LIB)
-            set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${LIBICONV_LIB})
-            set(VBAMCORE_LIBS ${VBAMCORE_LIBS} ${LIBICONV_LIB})
+            list(APPEND CMAKE_REQUIRED_LIBRARIES ${LIBICONV_LIB})
+            list(APPEND VBAMCORE_LIBS            ${LIBICONV_LIB})
+        endif()
+        if(LIBCHARSET_LIB)
+            list(APPEND CMAKE_REQUIRED_LIBRARIES ${LIBCHARSET_LIB})
+            list(APPEND VBAMCORE_LIBS            ${LIBCHARSET_LIB})
         endif()
         include(CheckFunctionExists)
         check_function_exists(gettext GETTEXT_FN)
@@ -943,10 +1006,15 @@ if(ENABLE_DEBUGGER)
     )
 endif()
 
+set(
+    HDR_STB_IMAGE
+    headers/stb/stb_image.h
+    headers/stb/stb_image_write.h
+)
+
 include_directories(
     ${ZLIB_INCLUDE_DIR}
     fex
-    ${PNG_INCLUDE_DIR}
     ${SDL2_INCLUDE_DIR}
 )
 
@@ -972,6 +1040,7 @@ add_library(
     ${HDR_FILTERS}
     ${SRC_DEBUGGER}
     ${HDR_DEBUGGER}
+    ${HDR_STB_IMAGE}
 )
 add_dependencies(vbamcore generate)
 set_property(TARGET vbamcore PROPERTY CXX_STANDARD 11)
@@ -989,6 +1058,11 @@ if(ENABLE_SDL)
 
     if(WIN32)
         set(WIN32_LIBRARIES wsock32 ws2_32 winmm version imm32)
+    endif()
+
+    if(MSVC)
+        # the debug lib libcmtd is linked in debug mode, so don't link the normal version
+        set_target_properties(vbam PROPERTIES LINK_FLAGS_DEBUG "/nodefaultlib:libcmt")
     endif()
 
     if(ENABLE_LIRC)
@@ -1042,15 +1116,6 @@ if(UNIX)
     endif()
     if(ENABLE_WX)
         install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/debian/visualboyadvance-m.6 DESTINATION ${CMAKE_INSTALL_FULL_MANDIR}/man6)
-    endif()
-endif()
-
-# linux data and icon files
-if(NOT WIN32 AND NOT APPLE)
-    if(ENABLE_WX)
-        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/wx/wxvbam.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/share/applications)
-        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/wx/wxvbam.appdata.xml DESTINATION ${CMAKE_INSTALL_PREFIX}/share/appdata)
-        install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/wx/icons/sizes/ DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor)
     endif()
 endif()
 

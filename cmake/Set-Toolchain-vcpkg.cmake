@@ -1,27 +1,65 @@
-macro(check_git_status)
+if(NOT DEFINED VCPKG_TARGET_TRIPLET)
+    return()
+endif()
+
+function(vcpkg_check_git_status git_status)
     if(NOT git_status EQUAL 0)
         message(FATAL_ERROR "Error updating vcpkg from git, please make sure git for windows is installed correctly, it can be installed from Visual Studio components")
     endif()
-endmacro()
+endfunction()
 
-if(VCPKG_TARGET_TRIPLET)
+function(vcpkg_get_first_upgrade vcpkg_exe)
+    # First get the list of upgraded ports.
+    execute_process(
+        COMMAND ${vcpkg_exe} upgrade
+        OUTPUT_VARIABLE upgradable
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        WORKING_DIRECTORY ${VCPKG_ROOT}
+    )
+
+    string(REGEX REPLACE "\r?\n" ";" upgrade_lines "${upgradable}")
+
+    foreach(line ${upgrade_lines})
+        if(line MATCHES "^  [* ] ")
+            string(REGEX REPLACE "^  [* ] " "" first_upgrade ${line})
+            set(first_upgrade ${first_upgrade} PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+endfunction()
+
+function(vcpkg_set_toolchain)
     if(NOT DEFINED ENV{VCPKG_ROOT})
-        get_filename_component(VCPKG_ROOT ${CMAKE_PROJECT_DIR}/../vcpkg ABSOLUTE)
+        if(WIN32)
+            if(DEFINED ENV{CI} OR EXISTS /vcpkg)
+                set(VCPKG_ROOT /vcpkg)
+            elseif(EXISTS c:/vcpkg)
+                set(VCPKG_ROOT c:/vcpkg)
+            endif()
+        endif()
+
+        if(NOT DEFINED VCPKG_ROOT)
+            get_filename_component(VCPKG_ROOT ${CMAKE_SOURCE_DIR}/../vcpkg ABSOLUTE)
+        endif()
+
         set(ENV{VCPKG_ROOT} ${VCPKG_ROOT})
     else()
         set(VCPKG_ROOT $ENV{VCPKG_ROOT})
     endif()
 
+    set(VCPKG_ROOT ${VCPKG_ROOT} CACHE FILEPATH "vcpkg installation root path" FORCE)
+
     if(NOT EXISTS ${VCPKG_ROOT})
-        get_filename_component(vcpkg_root_parent ${VCPKG_ROOT}/.. ABSOLUTE)
+        get_filename_component(root_parent ${VCPKG_ROOT}/.. ABSOLUTE)
 
         execute_process(
             COMMAND git clone https://github.com/microsoft/vcpkg.git
             RESULT_VARIABLE git_status
-            WORKING_DIRECTORY ${vcpkg_root_parent}
+            WORKING_DIRECTORY ${root_parent}
         )
 
-        check_git_status()
+        vcpkg_check_git_status(${git_status})
     else()
         # this is the case when we cache vcpkg/installed with the appveyor build cache
         if(NOT EXISTS ${VCPKG_ROOT}/.git)
@@ -41,7 +79,7 @@ if(VCPKG_TARGET_TRIPLET)
                     WORKING_DIRECTORY ${VCPKG_ROOT}
                 )
 
-                check_git_status()
+                vcpkg_check_git_status(${git_status})
             endforeach()
         else()
             execute_process(
@@ -49,7 +87,7 @@ if(VCPKG_TARGET_TRIPLET)
                 RESULT_VARIABLE git_status
                 WORKING_DIRECTORY ${VCPKG_ROOT}
             )
-            check_git_status()
+            vcpkg_check_git_status(${git_status})
 
             execute_process(
                 COMMAND git status
@@ -57,7 +95,7 @@ if(VCPKG_TARGET_TRIPLET)
                 OUTPUT_VARIABLE git_status_text
                 WORKING_DIRECTORY ${VCPKG_ROOT}
             )
-            check_git_status()
+            vcpkg_check_git_status(${git_status})
 
             set(git_up_to_date FALSE)
 
@@ -72,11 +110,11 @@ if(VCPKG_TARGET_TRIPLET)
                     WORKING_DIRECTORY ${VCPKG_ROOT}
                 )
 
-                check_git_status()
+                vcpkg_check_git_status(${git_status})
             endif()
         endif()
 
-        check_git_status()
+        vcpkg_check_git_status(${git_status})
     endif()
 
     # build latest vcpkg, if needed
@@ -116,11 +154,15 @@ if(VCPKG_TARGET_TRIPLET)
         WORKING_DIRECTORY ${VCPKG_ROOT}
     )
 
-    # make sure we have the latest versions
-    execute_process(
-        COMMAND ${vcpkg_exe} upgrade --no-dry-run
-        WORKING_DIRECTORY ${VCPKG_ROOT}
-    )
+    # If ports have been updated, rebuild cache one at a time to not overrun the CI time limit.
+    vcpkg_get_first_upgrade(${vcpkg_exe})
+
+    if(DEFINED first_upgrade)
+        execute_process(
+            COMMAND ${vcpkg_exe} upgrade --no-dry-run ${first_upgrade}
+            WORKING_DIRECTORY ${VCPKG_ROOT}
+        )
+    endif()
 
     if(WIN32 AND VCPKG_TARGET_TRIPLET MATCHES x64 AND CMAKE_GENERATOR MATCHES "Visual Studio")
         set(CMAKE_GENERATOR_PLATFORM x64 CACHE STRING "visual studio build architecture" FORCE)
@@ -133,5 +175,8 @@ if(VCPKG_TARGET_TRIPLET)
     endif()
 
     set(CMAKE_TOOLCHAIN_FILE ${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake CACHE FILEPATH "vcpkg toolchain" FORCE)
-    include(${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)
-endif()
+endfunction()
+
+vcpkg_set_toolchain()
+
+include(${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)

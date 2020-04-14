@@ -1650,6 +1650,12 @@ int main(int argc, char** argv)
             patchNames[patchNum] = tmp;
             patchNum++;
 
+            // no patch given yet - look for ROMBASENAME.bps
+            tmp = (char*)malloc(strlen(filename) + 4 + 1);
+            sprintf(tmp, "%s.bps", filename);
+            patchNames[patchNum] = tmp;
+            patchNum++;
+
             // no patch given yet - look for ROMBASENAME.ppf
             tmp = (char*)malloc(strlen(filename) + 4 + 1);
             sprintf(tmp, "%s.ppf", filename);
@@ -2012,6 +2018,10 @@ void systemDrawScreen()
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
     }
+}
+
+void systemSendScreen()
+{
 }
 
 void systemSetTitle(const char* title)
