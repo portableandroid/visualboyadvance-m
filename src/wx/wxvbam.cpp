@@ -41,6 +41,10 @@ int main(int argc, char** argv)
 }
 #endif
 
+#ifndef NO_ONLINEUPDATES
+#include "autoupdater/autoupdater.h"
+#endif // NO_ONLINEUPDATES
+
 // Initializer for struct cmditem
 cmditem new_cmditem(const wxString cmd, const wxString name, int cmd_id,
                     int mask_flags, wxMenuItem* mi)
@@ -193,24 +197,6 @@ wxString wxvbamApp::GetAbsolutePath(wxString path)
 
     return path;
 }
-
-#ifndef NO_ONLINEUPDATES
-#include "../common/version_cpp.h"
-
-#ifdef __WXMSW__
-#include "winsparkle-wrapper.h"
-#endif // __WXMSW__
-
-static void init_check_for_updates()
-{
-#ifdef __WXMSW__
-    wxString version(vbam_version);
-    win_sparkle_set_appcast_url("http://data.vba-m.com/appcast.xml");
-    win_sparkle_set_app_details(L"visualboyadvance-m", L"VisualBoyAdvance-M", version.wc_str());
-    win_sparkle_init();
-#endif // __WXMSW__
-}
-#endif // NO_ONLINEUPDATES
 
 #ifdef __WXMSW__
 #include <wx/msw/private.h>
@@ -470,9 +456,8 @@ bool wxvbamApp::OnInit()
     frame->Show(true);
 
 #ifndef NO_ONLINEUPDATES
-    init_check_for_updates();
+    initAutoupdater();
 #endif
-
     return true;
 }
 
@@ -723,8 +708,8 @@ wxvbamApp::~wxvbamApp() {
     }
     delete overrides;
 
-#if defined(__WXMSW__) && !defined(NO_ONLINEUPDATES)
-    win_sparkle_cleanup();
+#ifndef NO_ONLINEUPDATES
+    shutdownAutoupdater();
 #endif
 }
 
@@ -735,6 +720,8 @@ MainFrame::MainFrame()
     , dialog_opened(0)
     , focused(false)
 {
+    jpoll = new JoystickPoller();
+    this->Connect(wxID_ANY, wxEVT_SHOW, wxShowEventHandler(JoystickPoller::ShowDialog), jpoll, jpoll);
 }
 
 MainFrame::~MainFrame()
@@ -755,20 +742,11 @@ EVT_DROP_FILES(MainFrame::OnDropFile)
 // for window geometry
 EVT_MOVE(MainFrame::OnMove)
 EVT_SIZE(MainFrame::OnSize)
-// pause game if menu pops up
-//
-// This is a feature most people don't like, and it causes problems with
-// keyboard game keys on mac, so we will disable it for now.
-//
-// On Windows, there will still be a pause because of how the windows event
-// model works, in addition the audio will loop with SDL, so we still pause on
-// Windows, TODO: this needs to be fixed properly
-//
-#ifdef __WXMSW__
+
+// For tracking menubar state.
 EVT_MENU_OPEN(MainFrame::MenuPopped)
 EVT_MENU_CLOSE(MainFrame::MenuPopped)
 EVT_MENU_HIGHLIGHT_ALL(MainFrame::MenuPopped)
-#endif
 
 END_EVENT_TABLE()
 
@@ -870,17 +848,37 @@ int MainFrame::FilterEvent(wxEvent& event)
     if (event.GetEventType() == wxEVT_KEY_DOWN && !menus_opened && !dialog_opened)
     {
         wxKeyEvent& ke = (wxKeyEvent&)event;
-        int keyCode = ke.GetKeyCode();
+        int keyCode = getKeyboardKeyCode(ke);
         int keyMod = ke.GetModifiers();
         wxAcceleratorEntry_v accels = wxGetApp().GetAccels();
         for (size_t i = 0; i < accels.size(); ++i)
-             if (keyCode == accels[i].GetKeyCode() && keyMod == accels[i].GetFlags())
+             if (keyCode == accels[i].GetKeyCode() && keyMod == accels[i].GetFlags()
+                 && accels[i].GetCommand() != XRCID("NOOP"))
              {
                  wxCommandEvent evh(wxEVT_COMMAND_MENU_SELECTED, accels[i].GetCommand());
                  evh.SetEventObject(this);
                  GetEventHandler()->ProcessEvent(evh);
                  return true;
 	     }
+    }
+    else if (event.GetEventType() == wxEVT_SDLJOY && !menus_opened && !dialog_opened)
+    {
+        wxSDLJoyEvent& je = (wxSDLJoyEvent&)event;
+        if (je.GetControlValue() == 0) return -1; // joystick button UP
+        int key = je.GetControlIndex();
+        int mod = wxJoyKeyTextCtrl::DigitalButton(je);
+        int joy = je.GetJoy() + 1;
+        wxString label = wxJoyKeyTextCtrl::ToString(mod, key, joy);
+        wxAcceleratorEntry_v accels = wxGetApp().GetAccels();
+        for (size_t i = 0; i < accels.size(); ++i) {
+             if (label == accels[i].GetUkey())
+             {
+                 wxCommandEvent evh(wxEVT_COMMAND_MENU_SELECTED, accels[i].GetCommand());
+                 evh.SetEventObject(this);
+                 GetEventHandler()->ProcessEvent(evh);
+                 return true;
+	     }
+        }
     }
     return -1;
 }
@@ -910,8 +908,11 @@ wxString MainFrame::GetGamePath(wxString path)
 
 void MainFrame::SetJoystick()
 {
-    bool anyjoy = false;
+    /* Remove all attached joysticks to avoid errors while
+     * destroying and creating the GameArea `panel`. */
     joy.Remove();
+
+    set_global_accels();
 
     if (!emulating)
         return;
@@ -919,20 +920,30 @@ void MainFrame::SetJoystick()
     for (int i = 0; i < 4; i++)
         for (int j = 0; j < NUM_KEYS; j++) {
             wxJoyKeyBinding_v b = gopts.joykey_bindings[i][j];
-
             for (size_t k = 0; k < b.size(); k++) {
                 int jn = b[k].joy;
-
                 if (jn) {
-                    if (!anyjoy) {
-                        anyjoy = true;
-                        joy.Attach(panel);
-                    }
-
                     joy.Add(jn - 1);
                 }
             }
         }
+}
+
+void MainFrame::StopJoyPollTimer()
+{
+    if (jpoll && jpoll->IsRunning())
+        jpoll->Stop();
+}
+
+void MainFrame::StartJoyPollTimer()
+{
+    if (jpoll && !jpoll->IsRunning())
+        jpoll->Start();
+}
+
+bool MainFrame::IsJoyPollTimerRunning()
+{
+    return jpoll->IsRunning();
 }
 
 void MainFrame::enable_menus()
@@ -970,7 +981,7 @@ void MainFrame::update_state_ts(bool force)
 
         if (panel->game_type() != IMAGE_UNKNOWN) {
             wxString fn;
-            fn.Printf(SAVESLOT_FMT, panel->game_name().c_str(), i + 1);
+            fn.Printf(SAVESLOT_FMT, panel->game_name().wc_str(), i + 1);
             wxFileName fp(panel->state_dir(), fn);
             wxDateTime ts; // = wxInvalidDateTime
 
@@ -1069,65 +1080,43 @@ int MainFrame::newest_state_slot()
     return ns + 1;
 }
 
-// disable emulator loop while menus are popped up
-// not sure how to match up w/ down other than counting...
-// only msw is guaranteed to only give one up & one down event for entire
-// menu browsing
-// if there is ever a mismatch, the game will freeze and there is no way
-// to detect if it's doing that
-
-// FIXME: this does not work.
-// Not all open events are followed by close events.
-// Removing the nesting counter may help, but on wxGTK I still get lockups.
 void MainFrame::MenuPopped(wxMenuEvent& evt)
 {
-    bool popped = evt.GetEventType() != wxEVT_MENU_CLOSE;
-#if 0
-
-	if (popped)
-		++menus_opened;
-	else
-		--menus_opened;
-
-	if (menus_opened < 0) // how could this ever be???
-		menus_opened = 0;
-
-#else
-
-    if (popped)
-        menus_opened = 1;
+    // We consider the menu closed when the main menubar or system menu is closed, not any submenus.
+    // On Windows nullptr is the system menu.
+    if (evt.GetEventType() == wxEVT_MENU_CLOSE && (evt.GetMenu() == nullptr || evt.GetMenu()->GetMenuBar() == GetMenuBar()))
+        SetMenusOpened(false);
     else
-        menus_opened = 0;
+        SetMenusOpened(true);
 
-#endif
-
-    // workaround for lack of wxGTK mouse motion events: unblank
-    // pointer when menu popped up
-    // of course this does not help in finding the menus in the first place
-    // the user is better off clicking in the window or entering/
-    // exiting the window (which does generate a mouse event)
-    // it will auto-hide again once game resumes
-    if (popped)
-        panel->ShowPointer();
-
-    //if (menus_opened)
-    //    panel->Pause();
-    //else if (!IsPaused())
-    //    panel->Resume();
+    evt.Skip();
 }
 
+// Pause game if menu pops up.
+//
+// This is a feature most people don't like, and it causes problems with
+// keyboard game keys on mac, so we will disable it for now.
+//
+// On Windows, there will still be a pause because of how the windows event
+// model works, in addition the audio will loop with SDL, so we still pause on
+// Windows.
+//
+// TODO: This needs to be fixed properly.
+//
 void MainFrame::SetMenusOpened(bool state)
 {
-    if (state) {
-        menus_opened = 1;
+    if ((menus_opened = state)) {
+#ifdef __WXMSW__
         paused       = true;
         panel->Pause();
+#endif
     }
     else {
-        menus_opened = 0;
+#ifdef __WXMSW__
         paused       = false;
         pause_next   = false;
         panel->Resume();
+#endif
     }
 }
 

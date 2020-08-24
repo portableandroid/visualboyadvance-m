@@ -192,6 +192,7 @@ Here is the complete list:
 | ENABLE_SSP            | Enable gcc stack protector support (gcc only)                        | OFF                   |
 | ENABLE_ASAN           | Enable libasan sanitizers (by default address, only in debug mode)   | OFF                   |
 | UPSTREAM_RELEASE      | Do some release tasks, like codesigning, making zip and gpg sigs.    | OFF                   |
+| BUILD_TESTING         | Build the tests and enable ctest support.                            | ON                    |
 | VBAM_STATIC           | Try link all libs statically (the following are set to ON if ON)     | OFF                   |
 | SDL2_STATIC           | Try to link static SDL2 libraries                                    | OFF                   |
 | SFML_STATIC_LIBRARIES | Try to link static SFML libraries                                    | OFF                   |
@@ -203,6 +204,10 @@ Here is the complete list:
 Note for distro packagers, we use the CMake module
 [GNUInstallDirs](https://cmake.org/cmake/help/v2.8.12/cmake.html#module:GNUInstallDirs)
 to configure installation directories.
+
+On Unix to use a different version of wxWidgets, set
+`wxWidgets_CONFIG_EXECUTABLE` to the path to the `wx-config` script you want to
+use.
 
 ## MSys2 Notes
 

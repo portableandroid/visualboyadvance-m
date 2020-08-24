@@ -951,7 +951,7 @@ bool CPUReadState(const char* file)
 bool CPUExportEepromFile(const char* fileName)
 {
     if (eepromInUse) {
-        FILE* file = fopen(fileName, "wb");
+        FILE* file = utilOpenFile(fileName, "wb");
 
         if (!file) {
             systemMessage(MSG_ERROR_CREATING_FILE, N_("Error creating file %s"),
@@ -976,7 +976,7 @@ bool CPUExportEepromFile(const char* fileName)
 bool CPUWriteBatteryFile(const char* fileName)
 {
     if ((saveType) && (saveType != GBA_SAVE_NONE)) {
-        FILE* file = fopen(fileName, "wb");
+        FILE* file = utilOpenFile(fileName, "wb");
 
         if (!file) {
             systemMessage(MSG_ERROR_CREATING_FILE, N_("Error creating file %s"),
@@ -1011,7 +1011,7 @@ bool CPUWriteBatteryFile(const char* fileName)
 bool CPUReadGSASnapshot(const char* fileName)
 {
     int i;
-    FILE* file = fopen(fileName, "rb");
+    FILE* file = utilOpenFile(fileName, "rb");
 
     if (!file) {
         systemMessage(MSG_CANNOT_OPEN_FILE, N_("Cannot open file %s"), fileName);
@@ -1080,8 +1080,8 @@ bool CPUReadGSASPSnapshot(const char* fileName)
     const size_t footerpos = 0x42c, footersz = 4;
 
     char footer[footersz + 1], romname[namesz + 1], savename[namesz + 1];
-    ;
-    FILE* file = fopen(fileName, "rb");
+
+    FILE* file = utilOpenFile(fileName, "rb");
 
     if (!file) {
         systemMessage(MSG_CANNOT_OPEN_FILE, N_("Cannot open file %s"), fileName);
@@ -1134,7 +1134,7 @@ bool CPUWriteGSASnapshot(const char* fileName,
     const char* desc,
     const char* notes)
 {
-    FILE* file = fopen(fileName, "wb");
+    FILE* file = utilOpenFile(fileName, "wb");
 
     if (!file) {
         systemMessage(MSG_CANNOT_OPEN_FILE, N_("Cannot open file %s"), fileName);
@@ -1191,7 +1191,7 @@ bool CPUWriteGSASnapshot(const char* fileName,
 
 bool CPUImportEepromFile(const char* fileName)
 {
-    FILE* file = fopen(fileName, "rb");
+    FILE* file = utilOpenFile(fileName, "rb");
 
     if (!file)
         return false;
@@ -1235,7 +1235,7 @@ bool CPUImportEepromFile(const char* fileName)
 
 bool CPUReadBatteryFile(const char* fileName)
 {
-    FILE* file = fopen(fileName, "rb");
+    FILE* file = utilOpenFile(fileName, "rb");
 
     if (!file)
         return false;
@@ -1488,7 +1488,7 @@ int CPULoadRom(const char* szFile)
 
 #ifndef NO_DEBUGGER
     if (CPUIsELF(szFile)) {
-        FILE* f = fopen(szFile, "rb");
+        FILE* f = utilOpenFile(szFile, "rb");
         if (!f) {
             systemMessage(MSG_ERROR_OPENING_IMAGE, N_("Error opening image %s"),
                 szFile);
@@ -1715,8 +1715,7 @@ const char* GetSaveDotCodeFile()
 
 void ResetLoadDotCodeFile()
 {
-	if(loadDotCodeFile)
-	{
+    if (loadDotCodeFile) {
         free((char*)loadDotCodeFile);
     }
 
@@ -1730,8 +1729,7 @@ void SetLoadDotCodeFile(const char* szFile)
 
 void ResetSaveDotCodeFile()
 {
-    if (saveDotCodeFile)
-    {
+    if (saveDotCodeFile) {
         free((char*)saveDotCodeFile);
     }
 
@@ -2134,6 +2132,7 @@ void CPUSoftwareInterrupt(int comment)
         break;
     case 0x0A:
         BIOS_ArcTan2();
+        reg[3].I = 0x170;
         break;
     case 0x0B: {
         int len = (reg[2].I & 0x1FFFFF) >> 1;
@@ -3794,36 +3793,30 @@ void CPULoop(int ticks)
                     int framesToSkip = systemFrameSkip;
 
                     static bool speedup_throttle_set = false;
+                    bool turbo_button_pressed        = (joy >> 10) & 1;
 #ifndef __LIBRETRO__
                     static uint32_t last_throttle;
 
-                    if ((joy >> 10) & 1) {
-                        if (speedup_throttle != 100 && !speedup_throttle_set && throttle != speedup_throttle) {
-                            last_throttle = throttle;
-                            throttle = speedup_throttle;
-                            soundSetThrottle(speedup_throttle);
-                            speedup_throttle_set = true;
-                        }
-
-                        if (speedup_throttle_set) {
-                            if (speedup_throttle_frame_skip) {
-                                if (speedup_throttle == 0)
-                                    framesToSkip += 9;
-                                else if (speedup_throttle > 100)
-                                    framesToSkip += std::ceil(double(speedup_throttle) / 100.0) - 1;
+                    if (turbo_button_pressed) {
+                        if (speedup_frame_skip)
+                            framesToSkip = speedup_frame_skip;
+                        else {
+                            if (!speedup_throttle_set && throttle != speedup_throttle) {
+                                last_throttle = throttle;
+                                soundSetThrottle(speedup_throttle);
+                                speedup_throttle_set = true;
                             }
+
+                            if (speedup_throttle_frame_skip)
+                                framesToSkip += std::ceil(double(speedup_throttle) / 100.0) - 1;
                         }
-                        else
-                            framesToSkip = 9;
                     }
                     else if (speedup_throttle_set) {
-                        throttle = last_throttle;
                         soundSetThrottle(last_throttle);
-
                         speedup_throttle_set = false;
                     }
 #else
-                    if ((joy >> 10) & 1)
+                    if (turbo_button_pressed)
                         framesToSkip = 9;
 #endif
 

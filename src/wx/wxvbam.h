@@ -33,6 +33,7 @@
 #include "../gba/Sound.h"
 
 #include "wxlogdebug.h"
+#include "wxutil.h"
 
 template <typename T>
 void CheckPointer(T pointer)
@@ -203,6 +204,8 @@ class GameArea;
 
 class LogDialog;
 
+class JoystickPoller;
+
 // true if pause should happen at next frame
 extern bool pause_next;
 
@@ -305,7 +308,7 @@ public:
     // call this to update the viewers once a frame:
     void UpdateViewers();
 
-    virtual bool MenusOpened() { return menus_opened != 0; }
+    virtual bool MenusOpened() { return menus_opened; }
 
     virtual void SetMenusOpened(bool state);
 
@@ -315,10 +318,15 @@ public:
 
     bool IsPaused(bool incendental = false)
     {
-        return (paused && !pause_next && !incendental) || menus_opened || dialog_opened;
+        return (paused && !pause_next && !incendental) || dialog_opened;
     }
 
     void PollJoysticks() { joy.Poll(); }
+
+    // Poll joysticks with timer.
+    void StartJoyPollTimer();
+    void StopJoyPollTimer();
+    bool IsJoyPollTimerRunning();
 
     // required for building from xrc
     DECLARE_DYNAMIC_CLASS(MainFrame);
@@ -331,9 +339,8 @@ protected:
 private:
     GameArea* panel;
 
-    // the various reasons the game might be paused
-    bool paused;
-    int menus_opened, dialog_opened;
+    bool paused, menus_opened;
+    int dialog_opened;
 
     bool autoLoadMostRecent;
     // copy of top-level menu bar as a context menu
@@ -346,9 +353,10 @@ private:
     checkable_mi_array_t checkable_mi;
     // recent menu item accels
     wxMenu* recent;
-    wxAcceleratorEntry recent_accel[10];
+    wxAcceleratorEntryUnicode recent_accel[10];
     // joystick reader
     wxSDLJoy joy;
+    JoystickPoller* jpoll = nullptr;
 
     // helper function for adding menu to accel editor
     void add_menu_accels(wxTreeCtrl* tc, wxTreeItemId& parent, wxMenu* menu);
@@ -382,6 +390,20 @@ public:
     virtual wxWindow* GetWindow() = 0;
 private:
     double hidpi_scale_factor;
+};
+
+// a class for polling joystick keys
+class JoystickPoller : public wxTimer {
+    public:
+        void Notify() {
+            wxGetApp().frame->PollJoysticks();
+        }
+        void ShowDialog(wxShowEvent& ev) {
+            if (ev.IsShown())
+                Start(50);
+            else
+                Stop();
+        }
 };
 
 // a helper class to avoid forgetting StopModal()
@@ -473,6 +495,11 @@ enum audioapi { AUD_SDL,
 #define OSD_TIME 3000
 
 class DrawingPanelBase;
+
+#ifdef __WXMSW__
+// For saving menu handle.
+#include <windows.h>
+#endif
 
 class GameArea : public wxPanel, public HiDPIAware {
 public:
@@ -628,14 +655,17 @@ protected:
 public:
     void ShowPointer();
     void HidePointer();
+    void HideMenuBar();
+    void ShowMenuBar();
 
 protected:
-    void MouseEvent(wxMouseEvent&)
-    {
-        ShowPointer();
-    }
-    bool pointer_blanked;
+    void MouseEvent(wxMouseEvent&);
+    bool pointer_blanked, menu_bar_hidden = false;
     uint32_t mouse_active_time;
+    wxPoint mouse_last_pos;
+#ifdef __WXMSW__
+    HMENU current_hmenu = nullptr;
+#endif
 
     DECLARE_DYNAMIC_CLASS(GameArea)
     DECLARE_EVENT_TABLE()

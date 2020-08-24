@@ -114,6 +114,7 @@ enum named_opts
 	OPT_WINDOW_POSITION_Y,
 	OPT_WINDOW_WIDTH,
 	OPT_SPEEDUP_THROTTLE,
+	OPT_SPEEDUP_FRAME_SKIP,
 	OPT_NO_SPEEDUP_THROTTLE_FRAME_SKIP
 };
 
@@ -257,7 +258,8 @@ uint32_t movieLastJoypad;
 uint32_t movieNextJoypad;
 uint32_t throttle = 100;
 uint32_t speedup_throttle = 100;
-bool speedup_throttle_frame_skip = true;
+uint32_t speedup_frame_skip = 9;
+bool speedup_throttle_frame_skip = false;
 
 const char* preparedCheatCodes[MAX_CHEATS];
 
@@ -392,6 +394,7 @@ struct option argOptions[] = {
 	{ "thread-priority", required_argument, 0, OPT_THREAD_PRIORITY },
 	{ "throttle", required_argument, 0, 'T' },
 	{ "speedup-throttle", required_argument, 0, OPT_SPEEDUP_THROTTLE },
+	{ "speedup-frame-skip", required_argument, 0, OPT_SPEEDUP_FRAME_SKIP },
 	{ "no-speedup-throttle-frame-skip", no_argument, 0, OPT_NO_SPEEDUP_THROTTLE_FRAME_SKIP },
 	{ "triple-buffering", no_argument, &tripleBuffering, 1 },
 	{ "use-bios", no_argument, &useBios, 1 },
@@ -555,7 +558,8 @@ void LoadConfig()
 	threadPriority = ReadPref("priority", 2);
 	throttle = ReadPref("throttle", 100);
 	speedup_throttle = ReadPref("speedupThrottle", 100);
-	speedup_throttle_frame_skip = ReadPref("speedupThrottleFrameSkip", 1);
+	speedup_frame_skip = ReadPref("speedupFrameSkip", 9);
+	speedup_throttle_frame_skip = ReadPref("speedupThrottleFrameSkip", 0);
 	tripleBuffering = ReadPref("tripleBuffering", 0);
 	useBios = ReadPrefHex("useBiosGBA");
 	useBiosFileGB = ReadPref("useBiosGB", 0);
@@ -758,7 +762,7 @@ void SaveConfigFile()
 
 	if (configFile != NULL)
 	{
-		FILE *f = fopen(configFile, "w");
+		FILE *f = utilOpenFile(configFile, "w");
 		if (f == NULL) {
                         char err_msg[4096] = "unknown error";
                         strncpy(err_msg, strerror(errno), 4096);
@@ -896,7 +900,7 @@ int ReadOpts(int argc, char ** argv)
 				log("Missing config file name\n");
 				break;
 			}
-			FILE *f = fopen(optarg, "r");
+			FILE *f = utilOpenFile(optarg, "r");
 			if (f == NULL) {
 				log("File not found %s\n", optarg);
 				break;
@@ -1363,6 +1367,10 @@ int ReadOpts(int argc, char ** argv)
                 case OPT_SPEEDUP_THROTTLE:
                         if (optarg)
                             speedup_throttle = atoi(optarg);
+                        break;
+                case OPT_SPEEDUP_FRAME_SKIP:
+                        if (optarg)
+                            speedup_frame_skip = atoi(optarg);
                         break;
                 case OPT_NO_SPEEDUP_THROTTLE_FRAME_SKIP:
 			speedup_throttle_frame_skip = false;

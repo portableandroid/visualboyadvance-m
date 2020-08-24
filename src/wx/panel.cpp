@@ -2,7 +2,17 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+
+#if defined(__WXGTK__) && defined(HAVE_XSS)
+    #include <X11/Xlib.h>
+    #define Status int
+    #include <X11/extensions/scrnsaver.h>
+    #include <gdk/gdkx.h>
+    #include <gtk/gtk.h>
+#endif
+
 #include <wx/dcbuffer.h>
+#include <wx/menu.h>
 #include <SDL_joystick.h>
 
 #include "../common/version_cpp.h"
@@ -15,6 +25,12 @@
 #include "drawing.h"
 #include "filters.h"
 #include "wxvbam.h"
+#include "wxutil.h"
+#include "wayland.h"
+
+#ifdef __WXMSW__
+#include <windows.h>
+#endif
 
 // release all buttons currently pressed
 static void clear_input_press();
@@ -81,7 +97,7 @@ void GameArea::LoadGame(const wxString& name)
 
     // auto-conversion of wxCharBuffer to const char * seems broken
     // so save underlying wxCharBuffer (or create one of none is used)
-    wxCharBuffer fnb(fnfn.GetFullPath().mb_str(wxConvUTF8));
+    wxCharBuffer fnb(UTF8(fnfn.GetFullPath()));
     const char* fn = fnb.data();
     IMAGE_TYPE t = badfile ? IMAGE_UNKNOWN : utilFindType(fn);
 
@@ -158,7 +174,7 @@ void GameArea::LoadGame(const wxString& name)
 
         if (loadpatch) {
             int size = rom_size;
-            applyPatch(pfn.GetFullPath().mb_str(), &gbRom, &size);
+            applyPatch(UTF8(pfn.GetFullPath()), &gbRom, &size);
 
             if (size != (int)rom_size)
                 gbUpdateSizes();
@@ -183,7 +199,9 @@ void GameArea::LoadGame(const wxString& name)
         gbGetHardwareType();
 
         bool use_bios  =  gbCgbMode ? useBiosFileGBC : useBiosFileGB;
-        const char* fn = (gbCgbMode ? gopts.gbc_bios : gopts.gb_bios).mb_str();
+
+        wxCharBuffer fnb(UTF8((gbCgbMode ? gopts.gbc_bios : gopts.gb_bios)));
+        const char* fn = fnb.data();
 
         gbCPUInit(fn, use_bios);
 
@@ -223,7 +241,7 @@ void GameArea::LoadGame(const wxString& name)
             // don't use real rom size or it might try to resize rom[]
             // instead, use known size of rom[]
             int size = 0x2000000 < rom_size ? 0x2000000 : rom_size;
-            applyPatch(pfn.GetFullPath().mb_str(), &rom, &size);
+            applyPatch(UTF8(pfn.GetFullPath()), &rom, &size);
             // that means we no longer really know rom_size either <sigh>
 
             gbaUpdateRomSize(size);
@@ -285,7 +303,7 @@ void GameArea::LoadGame(const wxString& name)
 
         rtcEnableRumble(true);
 
-        CPUInit(gopts.gba_bios.mb_fn_str(), useBiosFileGBA);
+        CPUInit(UTF8(gopts.gba_bios), useBiosFileGBA);
 
         if (useBiosFileGBA && !useBios) {
             wxLogError(_("Could not load BIOS %s"), gopts.gba_bios.mb_str());
@@ -310,6 +328,7 @@ void GameArea::LoadGame(const wxString& name)
     emulating = true;
     was_paused = true;
     MainFrame* mf = wxGetApp().frame;
+    mf->StopJoyPollTimer();
     mf->SetJoystick();
     mf->cmd_enable &= ~(CMDEN_GB | CMDEN_GBA);
     mf->cmd_enable |= ONLOAD_CMDEN;
@@ -355,9 +374,9 @@ void GameArea::LoadGame(const wxString& name)
         bname.append(wxT(".sav"));
         wxFileName bat(batdir, bname);
 
-        if (emusys->emuReadBattery(bat.GetFullPath().mb_str())) {
+        if (emusys->emuReadBattery(UTF8(bat.GetFullPath()))) {
             wxString msg;
-            msg.Printf(_("Loaded battery %s"), bat.GetFullPath().mb_str());
+            msg.Printf(_("Loaded battery %s"), bat.GetFullPath().wc_str());
             systemScreenMessage(msg);
 
             if (cpuSaveType == 0 && ovSaveType == 0 && t == IMAGE_GBA) {
@@ -409,9 +428,9 @@ void GameArea::LoadGame(const wxString& name)
             bool cld;
 
             if (loaded == IMAGE_GB)
-                cld = gbCheatsLoadCheatList(cfn.GetFullPath().mb_fn_str());
+                cld = gbCheatsLoadCheatList(UTF8(cfn.GetFullPath()));
             else
-                cld = cheatsLoadCheatList(cfn.GetFullPath().mb_fn_str());
+                cld = cheatsLoadCheatList(UTF8(cfn.GetFullPath()));
 
             if (cld) {
                 systemScreenMessage(_("Loaded cheats"));
@@ -424,7 +443,7 @@ void GameArea::LoadGame(const wxString& name)
 
     if (gopts.link_auto) {
         linkMode = mf->GetConfiguredLinkMode();
-        BootLink(linkMode, gopts.link_host.mb_str(wxConvUTF8), linkTimeout, linkHacks, linkNumPlayers);
+        BootLink(linkMode, UTF8(gopts.link_host), linkTimeout, linkHacks, linkNumPlayers);
     }
 
 #endif
@@ -496,12 +515,12 @@ void GameArea::UnloadGame(bool destruct)
             if (!gbCheatNumber)
                 wxRemoveFile(cfn.GetFullPath());
             else
-                gbCheatsSaveCheatList(cfn.GetFullPath().mb_fn_str());
+                gbCheatsSaveCheatList(UTF8(cfn.GetFullPath()));
         } else {
             if (!cheatsNumber)
                 wxRemoveFile(cfn.GetFullPath());
             else
-                cheatsSaveCheatList(cfn.GetFullPath().mb_fn_str());
+                cheatsSaveCheatList(UTF8(cfn.GetFullPath()));
         }
     }
 
@@ -560,6 +579,7 @@ void GameArea::UnloadGame(bool destruct)
     mf->enable_menus();
     mf->SetJoystick();
     mf->ResetCheatSearch();
+    mf->StartJoyPollTimer();
 
     if (rewind_mem)
         num_rewind_states = 0;
@@ -578,14 +598,14 @@ bool GameArea::LoadState()
 bool GameArea::LoadState(int slot)
 {
     wxString fname;
-    fname.Printf(SAVESLOT_FMT, game_name().mb_str(), slot);
+    fname.Printf(SAVESLOT_FMT, game_name().wc_str(), slot);
     return LoadState(wxFileName(statedir, fname));
 }
 
 bool GameArea::LoadState(const wxFileName& fname)
 {
     // FIXME: first save to backup state if not backup state
-    bool ret = emusys->emuReadState(fname.GetFullPath().mb_fn_str());
+    bool ret = emusys->emuReadState(UTF8(fname.GetFullPath()));
 
     if (ret && num_rewind_states) {
         MainFrame* mf = wxGetApp().frame;
@@ -612,7 +632,7 @@ bool GameArea::LoadState(const wxFileName& fname)
 
     wxString msg;
     msg.Printf(ret ? _("Loaded state %s") : _("Error loading state %s"),
-        fname.GetFullPath().mb_str());
+        fname.GetFullPath().wc_str());
     systemScreenMessage(msg);
     return ret;
 }
@@ -625,18 +645,18 @@ bool GameArea::SaveState()
 bool GameArea::SaveState(int slot)
 {
     wxString fname;
-    fname.Printf(SAVESLOT_FMT, game_name().mb_str(), slot);
+    fname.Printf(SAVESLOT_FMT, game_name().wc_str(), slot);
     return SaveState(wxFileName(statedir, fname));
 }
 
 bool GameArea::SaveState(const wxFileName& fname)
 {
     // FIXME: first copy to backup state if not backup state
-    bool ret = emusys->emuWriteState(fname.GetFullPath().mb_fn_str());
+    bool ret = emusys->emuWriteState(UTF8(fname.GetFullPath()));
     wxGetApp().frame->update_state_ts(true);
     wxString msg;
     msg.Printf(ret ? _("Saved state %s") : _("Error saving state %s"),
-        fname.GetFullPath().mb_str());
+        fname.GetFullPath().wc_str());
     systemScreenMessage(msg);
     return ret;
 }
@@ -662,7 +682,7 @@ void GameArea::SaveBattery()
     // FIXME: add option to support ring of backups
     // of course some games just write battery way too often for such
     // a thing to be useful
-    if (!emusys->emuWriteBattery(fn.mb_str()))
+    if (!emusys->emuWriteBattery(UTF8(fn)))
         wxLogError(_("Error writing battery %s"), fn.mb_str());
 
     systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
@@ -923,7 +943,7 @@ GameArea::~GameArea()
 void GameArea::OnKillFocus(wxFocusEvent& ev)
 {
     clear_input_press();
-    ev.Skip(true);
+    ev.Skip();
 }
 
 void GameArea::Pause()
@@ -1025,8 +1045,6 @@ void GameArea::OnIdle(wxIdleEvent& event)
         wxWindow* w = panel->GetWindow();
 
         // set up event handlers
-        // use both CHAR_HOOK and KEY_DOWN in case CHAR_HOOK does not work for whatever reason
-        w->Connect(wxEVT_CHAR_HOOK,        wxKeyEventHandler(GameArea::OnKeyDown),         NULL, this);
         w->Connect(wxEVT_KEY_DOWN,         wxKeyEventHandler(GameArea::OnKeyDown),         NULL, this);
         w->Connect(wxEVT_KEY_UP,           wxKeyEventHandler(GameArea::OnKeyUp),           NULL, this);
         w->Connect(wxEVT_PAINT,            wxPaintEventHandler(GameArea::PaintEv),         NULL, this);
@@ -1036,8 +1054,15 @@ void GameArea::OnIdle(wxIdleEvent& event)
         // the userdata is freed on disconnect/destruction
         this->Connect(wxEVT_SIZE,          wxSizeEventHandler(GameArea::OnSize),           NULL, this);
 
-        // we need to check if the buttons stayed pressed when focus the panel
+        // We need to check if the buttons stayed pressed when focus the panel.
         w->Connect(wxEVT_KILL_FOCUS,       wxFocusEventHandler(GameArea::OnKillFocus),     NULL, this);
+
+        // Update mouse last-used timers on mouse events etc..
+        w->Connect(wxEVT_MOTION,           wxMouseEventHandler(GameArea::MouseEvent),      NULL, this);
+        w->Connect(wxEVT_LEFT_DOWN,        wxMouseEventHandler(GameArea::MouseEvent),      NULL, this);
+        w->Connect(wxEVT_RIGHT_DOWN,       wxMouseEventHandler(GameArea::MouseEvent),      NULL, this);
+        w->Connect(wxEVT_MIDDLE_DOWN,      wxMouseEventHandler(GameArea::MouseEvent),      NULL, this);
+        w->Connect(wxEVT_MOUSEWHEEL,       wxMouseEventHandler(GameArea::MouseEvent),      NULL, this);
 
         w->SetBackgroundStyle(wxBG_STYLE_CUSTOM);
         w->SetSize(wxSize(basic_width, basic_height));
@@ -1050,21 +1075,25 @@ void GameArea::OnIdle(wxIdleEvent& event)
         AdjustMinSize();
         AdjustSize(false);
 
-        unsigned frame_priority = 0;
+        unsigned frame_priority = gopts.retain_aspect ? 0 : 1;
+
+        GetSizer()->Clear();
 
         // add spacers on top and bottom to center panel vertically
         // but not on 2.8 which does not handle this correctly
+        if (gopts.retain_aspect)
 #if wxCHECK_VERSION(2, 9, 0)
-        GetSizer()->Add(0, 0, wxEXPAND);
+            GetSizer()->Add(0, 0, wxEXPAND);
 #else
-        frame_priority = 1;
+            frame_priority = 1;
 #endif
 
         // this triggers an assertion dialog in <= 3.1.2 in debug mode
         GetSizer()->Add(w, frame_priority, gopts.retain_aspect ? (wxSHAPED | wxALIGN_CENTER | wxEXPAND) : wxEXPAND);
 
 #if wxCHECK_VERSION(2, 9, 0)
-        GetSizer()->Add(0, 0, wxEXPAND);
+        if (gopts.retain_aspect)
+            GetSizer()->Add(0, 0, wxEXPAND);
 #endif
 
         Layout();
@@ -1089,6 +1118,7 @@ void GameArea::OnIdle(wxIdleEvent& event)
 
     if (!paused) {
         HidePointer();
+        HideMenuBar();
         event.RequestMore();
 
 #ifndef NO_DEBUGGER
@@ -1117,6 +1147,8 @@ void GameArea::OnIdle(wxIdleEvent& event)
 
         if (paused)
             SetExtraStyle(GetExtraStyle() & ~wxWS_EX_PROCESS_IDLE);
+
+        ShowMenuBar();
     }
 
     if (do_rewind && emusys->emuWriteMemState) {
@@ -1290,29 +1322,41 @@ static void draw_black_background(wxWindow* win) {
     dc.DrawRectangle(0, 0, w, h);
 }
 
+static bool is_key_pressed(wxKeyEvent& ev)
+{
+    auto kc = ev.GetKeyCode();
+
+    // Under Wayland or if the key is unicode, we can't use wxGetKeyState().
+    if (IsItWayland() || kc == WXK_NONE)
+        return true;
+
+    return wxGetKeyState(static_cast<wxKeyCode>(kc));
+}
+
+static bool is_key_released(wxKeyEvent& ev)
+{
+    auto kc = ev.GetKeyCode();
+
+    // Under Wayland or if the key is unicode, we can't use wxGetKeyState().
+    if (IsItWayland() || kc == WXK_NONE)
+        return true;
+
+    return !wxGetKeyState(static_cast<wxKeyCode>(kc));
+}
+
 void GameArea::OnKeyDown(wxKeyEvent& ev)
 {
-    // check if the key is pressed indeed and then process it
-    wxKeyCode keyCode = (wxKeyCode)ev.GetKeyCode();
-    if (wxGetKeyState(keyCode) && process_key_press(true, ev.GetKeyCode(), ev.GetModifiers())) {
-        ev.Skip(false);
-        ev.StopPropagation();
+    int kc = getKeyboardKeyCode(ev);
+    if (is_key_pressed(ev) && process_key_press(true, kc, ev.GetModifiers())) {
         wxWakeUpIdle();
-    }
-    else {
-        ev.Skip(true);
     }
 }
 
 void GameArea::OnKeyUp(wxKeyEvent& ev)
 {
-    if (process_key_press(false, ev.GetKeyCode(), ev.GetModifiers())) {
-        ev.Skip(false);
-        ev.StopPropagation();
+    int kc = getKeyboardKeyCode(ev);
+    if (is_key_released(ev) && process_key_press(false, kc, ev.GetModifiers())) {
         wxWakeUpIdle();
-    }
-    else {
-        ev.Skip(true);
     }
 }
 
@@ -1336,16 +1380,8 @@ void GameArea::OnSize(wxSizeEvent& ev)
     if (panel)
         panel->OnSize(ev);
 
-    ev.Skip(true);
+    ev.Skip();
 }
-
-#if defined(__WXGTK__) && defined(HAVE_XSS)
-    #include <X11/Xlib.h>
-    #define Status int
-    #include <X11/extensions/scrnsaver.h>
-    #include <gdk/gdkx.h>
-    #include <gtk/gtk.h>
-#endif
 
 void GameArea::OnSDLJoy(wxSDLJoyEvent& ev)
 {
@@ -1858,7 +1894,7 @@ void DrawingPanelBase::DrawArea(uint8_t** data)
 
         if (panel->osdstat.size())
             drawText(todraw + outstride * (systemColorDepth != 24), outstride,
-                10, 20, panel->osdstat.mb_str(), showSpeedTransparent);
+                10, 20, UTF8(panel->osdstat), showSpeedTransparent);
 
         if (!disableStatusMessages && !panel->osdtext.empty()) {
             if (systemGetClock() - panel->osdtime < OSD_TIME) {
@@ -1866,7 +1902,7 @@ void DrawingPanelBase::DrawArea(uint8_t** data)
                 int linelen = std::ceil(width * scale - 20) / 8;
                 int nlines = (message.size() + linelen - 1) / linelen;
                 int cury = height - 14 - nlines * 10;
-                char* buf = strdup(message.mb_str());
+                char* buf = strdup(UTF8(message));
                 char* ptr = buf;
 
                 while (nlines > 1) {
@@ -1999,7 +2035,7 @@ void DrawingPanelBase::DrawOSD(wxWindowDC& dc)
 
 void DrawingPanelBase::OnSize(wxSizeEvent& ev)
 {
-    ev.Skip(true);
+    ev.Skip();
 }
 
 DrawingPanelBase::~DrawingPanelBase()
@@ -2255,12 +2291,12 @@ void GLDrawingPanel::DrawingPanelInit()
     }
 #elif defined(__WXMSW__)
     typedef char* (*wglext)();
-    wglext wglGetExtensionsString = (wglext)wglGetProcAddress("wglGetExtensionsString");
-    if (wglGetExtensionsString == NULL || strstr(wglGetExtensionsString(), "WGL_EXT_swap_control") == 0) {
-        if (wglGetExtensionsString == NULL)
-            systemScreenMessage(_("No support for wglGetExtensionsString"));
-        else
-            systemScreenMessage(_("No support for WGL_EXT_swap_control"));
+    wglext wglGetExtensionsStringEXT = (wglext)wglGetProcAddress("wglGetExtensionsStringEXT");
+    if (wglGetExtensionsStringEXT == NULL) {
+        systemScreenMessage(_("No support for wglGetExtensionsStringEXT"));
+    }
+    else if (strstr(wglGetExtensionsStringEXT(), "WGL_EXT_swap_control") == 0) {
+        systemScreenMessage(_("No support for WGL_EXT_swap_control"));
     }
 
     typedef bool (*PFNWGLSWAPINTERVALEXTPROC)(int);
@@ -2283,7 +2319,7 @@ void GLDrawingPanel::OnSize(wxSizeEvent& ev)
 {
     AdjustViewport();
 
-    ev.Skip(true);
+    ev.Skip();
 }
 
 void GLDrawingPanel::AdjustViewport()
@@ -2394,7 +2430,7 @@ void GameArea::StartVidRecording(const wxString& fname)
     recording::MediaRet ret;
 
     vid_rec.SetSampleRate(soundGetSampleRate());
-    if ((ret = vid_rec.Record(fname.mb_str(), basic_width, basic_height,
+    if ((ret = vid_rec.Record(UTF8(fname), basic_width, basic_height,
              systemColorDepth))
         != recording::MRET_OK)
         wxLogError(_("Unable to begin recording to %s (%s)"), fname.mb_str(),
@@ -2425,7 +2461,7 @@ void GameArea::StartSoundRecording(const wxString& fname)
     recording::MediaRet ret;
 
     snd_rec.SetSampleRate(soundGetSampleRate());
-    if ((ret = snd_rec.Record(fname.mb_str())) != recording::MRET_OK)
+    if ((ret = snd_rec.Record(UTF8(fname))) != recording::MRET_OK)
         wxLogError(_("Unable to begin recording to %s (%s)"), fname.mb_str(),
             media_err(ret));
     else {
@@ -2476,17 +2512,29 @@ void GameArea::AddFrame(const uint8_t* data)
 }
 #endif
 
-void GameArea::ShowPointer()
+void GameArea::MouseEvent(wxMouseEvent& ev)
 {
-    if (fullscreen)
-        return;
-
     mouse_active_time = systemGetClock();
 
-    if (!pointer_blanked)
-        return;
+    wxPoint cur_pos = wxGetMousePosition();
+
+    // Ignore small movements.
+    if (!ev.Moving() || (std::abs(cur_pos.x - mouse_last_pos.x) >= 11 && std::abs(cur_pos.y - mouse_last_pos.y) >= 11)) {
+        ShowPointer();
+        ShowMenuBar();
+    }
+
+    mouse_last_pos = cur_pos;
+
+    ev.Skip();
+}
+
+void GameArea::ShowPointer()
+{
+    if (!pointer_blanked || fullscreen) return;
 
     pointer_blanked = false;
+
     SetCursor(wxNullCursor);
 
     if (panel)
@@ -2495,12 +2543,11 @@ void GameArea::ShowPointer()
 
 void GameArea::HidePointer()
 {
-    if (pointer_blanked)
-        return;
+    if (pointer_blanked || !main_frame) return;
 
     // FIXME: make time configurable
     if ((fullscreen || (systemGetClock() - mouse_active_time) > 3000) &&
-        !(main_frame && (main_frame->MenusOpened() || main_frame->DialogOpened()))) {
+        !(main_frame->MenusOpened() || main_frame->DialogOpened())) {
         pointer_blanked = true;
         SetCursor(wxCursor(wxCURSOR_BLANK));
 
@@ -2508,6 +2555,44 @@ void GameArea::HidePointer()
         if (panel)
             panel->GetWindow()->SetCursor(wxCursor(wxCURSOR_BLANK));
     }
+}
+
+// We do not hide the menubar on mac, on mac it is not part of the main frame
+// and the user can adjust hiding behavior herself.
+void GameArea::HideMenuBar()
+{
+#ifndef __WXMAC__
+    if (!main_frame || menu_bar_hidden || !gopts.hide_menu_bar) return;
+
+    if (((systemGetClock() - mouse_active_time) > 3000) && !main_frame->MenusOpened()) {
+#ifdef __WXMSW__
+        current_hmenu = static_cast<HMENU>(main_frame->GetMenuBar()->GetHMenu());
+        ::SetMenu(main_frame->GetHandle(), nullptr);
+#else
+        main_frame->GetMenuBar()->Hide();
+#endif
+        SendSizeEvent();
+        menu_bar_hidden = true;
+    }
+#endif
+}
+
+void GameArea::ShowMenuBar()
+{
+#ifndef __WXMAC__
+    if (!main_frame || !menu_bar_hidden) return;
+
+#ifdef __WXMSW__
+    if (current_hmenu != nullptr) {
+        ::SetMenu(main_frame->GetHandle(), current_hmenu);
+        current_hmenu = nullptr;
+    }
+#else
+    main_frame->GetMenuBar()->Show();
+#endif
+    SendSizeEvent();
+    menu_bar_hidden = false;
+#endif
 }
 
 // stub HiDPI methods, see macsupport.mm for the Mac support

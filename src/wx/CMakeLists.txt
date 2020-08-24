@@ -158,25 +158,14 @@ if(WIN32 AND CMAKE_TOOLCHAIN_FILE MATCHES vcpkg AND (X86_32 OR AMD64))
             ${wxWidgets_LIB_DIR}/jpeg${deb_suffix}.lib
             ${wxWidgets_LIB_DIR}/tiff${deb_suffix}.lib
             ${wxWidgets_LIB_DIR}/lzma${deb_suffix}.lib
-            ${wxWidgets_LIB_DIR}/expat.lib
+            ${wxWidgets_LIB_DIR}/libexpat${deb_suffix}MD.lib
             ${png_lib}
         )
     endif()
 
-    if(NOT EXISTS ${installed_prefix}/bin/wxrc.exe)
-        # Need to copy both the release and debug versions out of the build tree, because
-        # appveyor does not cache the build trees.
-        file(
-            COPY ${build_prefix_rel}/lib/wxrc.exe
-            DESTINATION ${common_prefix}/bin
-        )
-        file(
-            COPY ${build_prefix_dbg}/lib/wxrc.exe
-            DESTINATION ${dbg_prefix}/bin
-        )
-    endif()
+    set(WXRC ${common_prefix}/tools/wxwidgets/wxrc.exe)
 
-    set(WXRC ${installed_prefix}/bin/wxrc.exe)
+    set(ENV{PATH} "${dbg_prefix}/bin;${common_prefix}/bin;$ENV{PATH}")
 
     if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/zip.exe)
         # get zip binary for wxrc
@@ -584,45 +573,46 @@ endif()
 
 set(
     XRC_SOURCES
-    xrc/AccelConfig.xrc
-    xrc/CheatAdd.xrc
-    xrc/CheatCreate.xrc
-    xrc/CheatEdit.xrc
-    xrc/CheatList.xrc
-    xrc/CodeSelect.xrc
-    xrc/DirectoriesConfig.xrc
-    xrc/Disassemble.xrc
-    xrc/DisplayConfig.xrc
-    xrc/ExportSPS.xrc
-    xrc/GBAROMInfo.xrc
-    xrc/GBColorPrefPanel.xrc
-    xrc/GBDisassemble.xrc
-    xrc/GBMapViewer.xrc
-    xrc/GBOAMViewer.xrc
-    xrc/GBPaletteViewer.xrc
-    xrc/GBPrinter.xrc
-    xrc/GBROMInfo.xrc
-    xrc/GBTileViewer.xrc
-    xrc/GameBoyAdvanceConfig.xrc
-    xrc/GameBoyConfig.xrc
-    xrc/GeneralConfig.xrc
-    xrc/IOViewer.xrc
-    xrc/JoyPanel.xrc
-    xrc/JoypadConfig.xrc
-    xrc/LinkConfig.xrc
-    xrc/Logging.xrc
-    xrc/MainFrame.xrc
-    xrc/MainIcon.xrc
-    xrc/MainMenu.xrc
-    xrc/MapViewer.xrc
-    xrc/MemSelRegion.xrc
-    xrc/MemViewer.xrc
-    xrc/NetLink.xrc
-    xrc/OAMViewer.xrc
-    xrc/PaletteViewer.xrc
-    xrc/SoundConfig.xrc
-    xrc/TileViewer.xrc
-    xrc/SpeedupConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/AccelConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/CheatAdd.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/CheatCreate.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/CheatEdit.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/CheatList.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/CodeSelect.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/DirectoriesConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/Disassemble.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/DisplayConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/ExportSPS.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBAROMInfo.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBColorPrefPanel.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBDisassemble.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBMapViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBOAMViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBPaletteViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBPrinter.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBROMInfo.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GBTileViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GameBoyAdvanceConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GameBoyConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/GeneralConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/IOViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/JoyPanel.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/JoypadConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/LinkConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/Logging.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/MainFrame.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/MainIcon.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/MainMenu.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/MapViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/MemSelRegion.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/MemViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/NetLink.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/OAMViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/PaletteViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/SoundConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/TileViewer.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/SpeedupConfig.xrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/xrc/UIConfig.xrc
 )
 
 # wxrc does not support xrs files in -c output (> 10x compression)
@@ -692,8 +682,8 @@ endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/wxvbam.xrs
-    COMMAND ${WXRC} ${XRC_SOURCES} -o ${CMAKE_CURRENT_BINARY_DIR}/wxvbam.xrs
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=$ENV{PATH}" ${WXRC} ${XRC_SOURCES} -o ${CMAKE_CURRENT_BINARY_DIR}/wxvbam.xrs
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DEPENDS ${XRC_SOURCES}
 )
 
@@ -738,6 +728,7 @@ set(
     viewsupt.cpp
     wayland.cpp
     strutils.cpp
+    wxutil.cpp
     widgets/keyedit.cpp
     widgets/joyedit.cpp
     widgets/sdljoy.cpp
@@ -768,6 +759,7 @@ set(
     viewsupt.h
     wxhead.h
     wayland.h
+    wxutil.h
     widgets/wx/keyedit.h
     widgets/wx/joyedit.h
     widgets/wx/sdljoy.h
@@ -783,13 +775,32 @@ set(
 )
 
 set(ALL_HDR_WX ${HDR_WX})
-
-list(APPEND ALL_SRC_WX winsparkle-wrapper.cpp)
-list(APPEND ALL_HDR_WX winsparkle-wrapper.h winsparkle-rc.h)
+# make files included for gettext pot generation
+list(APPEND ALL_SRC_WX autoupdater/wxmsw/autoupdater.cpp)
+list(APPEND ALL_HDR_WX autoupdater/autoupdater.h)
+list(APPEND ALL_SRC_WX autoupdater/wxmsw/winsparkle-wrapper.cpp)
+list(APPEND ALL_HDR_WX autoupdater/wxmsw/winsparkle-wrapper.h)
+list(APPEND ALL_HDR_WX autoupdater/wxmsw/winsparkle-rc.h)
 
 if(WIN32 AND (AMD64 OR X86_32) AND ENABLE_ONLINEUPDATES)
-    list(APPEND SRC_WX winsparkle-wrapper.cpp)
-    list(APPEND HDR_WX winsparkle-wrapper.h winsparkle-rc.h)
+    list(APPEND SRC_WX autoupdater/wxmsw/autoupdater.cpp)
+    list(APPEND HDR_WX autoupdater/autoupdater.h)
+    list(APPEND SRC_WX autoupdater/wxmsw/winsparkle-wrapper.cpp)
+    list(APPEND HDR_WX autoupdater/wxmsw/winsparkle-wrapper.h)
+    list(APPEND HDR_WX autoupdater/wxmsw/winsparkle-rc.h)
+endif()
+
+# make files included for gettext pot generation
+list(APPEND ALL_HDR_WX autoupdater/autoupdater.h)
+list(APPEND ALL_SRC_WX autoupdater/macos/autoupdater.cpp)
+list(APPEND ALL_SRC_WX autoupdater/macos/sparkle-wrapper.mm)
+list(APPEND ALL_HDR_WX autoupdater/macos/sparkle-wrapper.h)
+
+if(APPLE AND ENABLE_ONLINEUPDATES)
+    list(APPEND HDR_WX autoupdater/autoupdater.h)
+    list(APPEND SRC_WX autoupdater/macos/autoupdater.cpp)
+    list(APPEND SRC_WX autoupdater/macos/sparkle-wrapper.mm)
+    list(APPEND HDR_WX autoupdater/macos/sparkle-wrapper.h)
 endif()
 
 set(
@@ -880,7 +891,47 @@ if(WIN32 AND (AMD64 OR X86_32) AND ENABLE_ONLINEUPDATES)
         set(WINSPARKLE_DLL ${CMAKE_SOURCE_DIR}/dependencies/WinSparkle-0.6.0/Release/WinSparkle.dll)
     endif()
 
-    configure_file(winsparkle-path.h.in ${CMAKE_BINARY_DIR}/winsparkle-path.h)
+    configure_file(autoupdater/wxmsw/winsparkle-path.h.in ${CMAKE_BINARY_DIR}/winsparkle-path.h)
+endif()
+
+if(APPLE AND ENABLE_ONLINEUPDATES)
+
+    include(FetchContent)
+    FetchContent_Declare(Sparkle
+        URL "https://github.com/sparkle-project/Sparkle/releases/download/1.23.0/Sparkle-1.23.0.tar.bz2"
+        URL_HASH SHA512=fa7e9736d4319bf839cd5e11177d1ddac78c38048be7e59b5c94ea76c9ffc02919dd17890295d21b7f0e35afe0ec9aba9ba36912caed6e5017420345f9f66682
+    )
+    FetchContent_MakeAvailable(Sparkle)
+
+    find_library(SPARKLE_FRAMEWORK
+      NAMES Sparkle
+      HINTS ${sparkle_SOURCE_DIR}
+    )
+    find_path(SPARKLE_INCLUDE_DIR Sparkle.h HINTS ${SPARKLE_FRAMEWORK}/Headers)
+    target_include_directories(
+        visualboyadvance-m
+        PRIVATE ${SPARKLE_INCLUDE_DIR}
+    )
+
+    set(APPCAST_URL "https://data.vba-m.com/appcast.xml")
+    set(CCS1 mkdir -p ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Frameworks)
+    # The following commands *should* be run to make sure Sparkle is not going
+    # to bug randomly (version=1.23)
+    set(CCS2 cp -a ${SPARKLE_FRAMEWORK} ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Frameworks/Sparkle.framework)
+    set(CCS3 defaults write ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Info.plist CFBundleVersion -string "${VERSION}")
+    set(CCS4 defaults write ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Info.plist SUEnableAutomaticChecks -bool YES)
+    #set(CCS5 defaults write ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Info.plist SUPublicEDKey -string "${PUBLIC_KEY}")
+    set(CCS6 defaults write ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Info.plist SUFeedURL -string "${APPCAST_URL}")
+    add_custom_command(TARGET visualboyadvance-m POST_BUILD
+      COMMAND ${CCS1}
+      COMMAND ${CCS2}
+      COMMAND ${CCS3}
+      COMMAND ${CCS4}
+      #COMMAND ${CCS5}
+      COMMAND ${CCS6}
+    )
+
+    TARGET_LINK_LIBRARIES(visualboyadvance-m ${SPARKLE_FRAMEWORK})
 endif()
 
 target_link_libraries(
@@ -977,8 +1028,8 @@ endif()
 if(ENABLE_NLS)
     add_custom_command(
         OUTPUT ${CMAKE_BINARY_DIR}/wx-xrc-strings.h
-        COMMAND ${WXRC} -g ${XRC_SOURCES} -o ${CMAKE_BINARY_DIR}/wx-xrc-strings.h
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${CMAKE_COMMAND} -E env "PATH=$ENV{PATH}" ${WXRC} -g ${XRC_SOURCES} -o ${CMAKE_BINARY_DIR}/wx-xrc-strings.h
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         DEPENDS ${XRC_SOURCES}
     )
 
@@ -1138,7 +1189,7 @@ if(APPLE)
     endif()
 endif()
 
-if(UPSTREAM_RELEASE AND APPLE)
+if(APPLE AND (UPSTREAM_RELEASE OR ENABLE_ONLINEUPDATES))
     if(NOT CMAKE_BUILD_TYPE MATCHES Debug)
         find_program(STRIP_PROGRAM strip)
 
@@ -1162,32 +1213,48 @@ if(UPSTREAM_RELEASE AND APPLE)
         add_custom_command(
             TARGET visualboyadvance-m
             POST_BUILD
-            COMMAND codesign -s "Developer ID Application" --deep ./visualboyadvance-m.app
+            COMMAND codesign --sign "Developer ID Application" --force --deep ./visualboyadvance-m.app
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         )
+
+        if(EXISTS ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Frameworks)
+            # Sign frameworks individually, like Xcode.
+            file(GLOB frameworks ${CMAKE_BINARY_DIR}/visualboyadvance-m.app/Contents/Frameworks/*)
+            foreach(framework ${frameworks})
+                message(STATUS "Signing framework: " ${framework})
+                add_custom_command(
+                    TARGET visualboyadvance-m
+                    POST_BUILD
+                    COMMAND codesign --sign "Developer ID Application" --force ${framework}
+                    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                )
+            endforeach()
+        endif()
     else()
         message(WARNING "Set the environment variable LOGIN_KEYCHAIN_PASSWORD to your login keychain password to codesign.")
     endif()
 
-    set(appzip visualboyadvance-m-Mac-${BITS}bit${ZIP_SUFFIX}.zip)
+    if(UPSTREAM_RELEASE)
+        set(appzip visualboyadvance-m-Mac-${BITS}bit${ZIP_SUFFIX}.zip)
 
-    add_custom_command(
-        TARGET visualboyadvance-m
-        POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E remove ${appzip}
-        COMMAND ${ZIP_PROGRAM} -9r ${appzip} ./visualboyadvance-m.app
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    )
-
-    if(GPG_KEYS)
         add_custom_command(
             TARGET visualboyadvance-m
             POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E remove ${appzip}.asc
-            COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/interactive-pause.cmake
-            COMMAND ${GPG_PROGRAM} --detach-sign -a ${appzip}
+            COMMAND ${CMAKE_COMMAND} -E remove ${appzip}
+            COMMAND ${ZIP_PROGRAM} -9r ${appzip} ./visualboyadvance-m.app
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         )
+
+        if(GPG_KEYS)
+            add_custom_command(
+                TARGET visualboyadvance-m
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E remove ${appzip}.asc
+                COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/interactive-pause.cmake
+                COMMAND ${GPG_PROGRAM} --detach-sign -a ${appzip}
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            )
+        endif()
     endif()
 endif()
 
@@ -1210,4 +1277,8 @@ install(
     BUNDLE  DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-# vim:sw=4 tw=0
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING))
+    add_subdirectory(tests)
+endif()
+
+# vim:sw=4 et tw=0:

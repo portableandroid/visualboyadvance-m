@@ -13,6 +13,10 @@ if(COMMAND cmake_policy)
     if(POLICY CMP0043)
         cmake_policy(SET CMP0043 NEW) # for wxWidgets, use generator expressions
     endif()
+
+    if(POLICY CMP0048)
+        cmake_policy(SET CMP0048 NEW) # set CMAKE_PROJECT_VERSION*
+    endif()
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
@@ -25,14 +29,8 @@ if(TAG_RELEASE)
     include(MakeReleaseCommitAndTag)
 endif()
 
-set(VCPKG_DEPS zlib SDL2 SFML gettext wxWidgets)
-
-# appveyor job goes over time limit if building ffmpeg during initial cache
-# generation. So build initial cache without ffmpeg.
-#if(NOT DEFINED ENV{APPVEYOR})
-if(1)
-    list(APPEND VCPKG_DEPS ffmpeg)
-endif()
+set(VCPKG_DEPS          zlib SDL2 SFML gettext wxWidgets)
+set(VCPKG_DEPS_OPTIONAL ffmpeg ENABLE_FFMPEG)
 
 include(Set-Toolchain-vcpkg)
 
@@ -40,6 +38,25 @@ set(VBAM_STATIC_DEFAULT OFF)
 
 if(VCPKG_TARGET_TRIPLET MATCHES -static OR CMAKE_TOOLCHAIN_FILE MATCHES "mxe|-static")
     set(VBAM_STATIC_DEFAULT ON)
+endif()
+
+# Use ccache if available and not already enabled on the command line.
+# This has to be done before the project() call.
+if(NOT (CMAKE_CXX_COMPILER_LAUNCHER OR CMAKE_CXX_COMPILER MATCHES ccache))
+    find_program(CCACHE_EXECUTABLE ccache)
+    if(CCACHE_EXECUTABLE)
+        message(STATUS "Enabling ccache")
+
+        if(CMAKE_VERSION VERSION_LESS 3.4.0)
+            # FIXME: This method currently breaks for native ccache on windows
+            # with the visual studio resource compiler.
+            set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_EXECUTABLE})
+        else()
+            set(CMAKE_C_COMPILER_LAUNCHER        ${CCACHE_EXECUTABLE} CACHE STRING "C compiler launcher"     FORCE)
+            set(CMAKE_CXX_COMPILER_LAUNCHER      ${CCACHE_EXECUTABLE} CACHE STRING "C++ compiler launcher"   FORCE)
+            set(CMAKE_ASM_NASM_COMPILER_LAUNCHER ${CCACHE_EXECUTABLE} CACHE STRING "nasm assembler launcher" FORCE)
+        endif()
+    endif()
 endif()
 
 project(VBA-M C CXX)
@@ -52,6 +69,12 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "")
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build Type" FORCE)
+endif()
+
+include(CTest)
+
+if(BUILD_TESTING)
+    enable_testing()
 endif()
 
 set(ALL_TARGETS fex visualboyadvance-m vbamcore vbam)
@@ -79,18 +102,6 @@ if(VBAM_STATIC)
 
     if(NOT MSVC)
         list(INSERT CMAKE_FIND_LIBRARY_SUFFIXES 0 .a)
-    endif()
-endif()
-
-# use ccache if available, and not already enabled on the command line
-# but not with ninja and msys ccache on msys2
-if(NOT (WIN32 AND NOT "$ENV{MSYSTEM_PREFIX}" STREQUAL "" AND CMAKE_GENERATOR STREQUAL Ninja))
-    if(NOT CMAKE_CXX_COMPILER_LAUNCHER AND NOT CMAKE_C_COMPILER_LAUNCHER)
-        find_program(CCACHE_FOUND ccache)
-        if(CCACHE_FOUND)
-            set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
-            set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
-        endif(CCACHE_FOUND)
     endif()
 endif()
 
@@ -176,11 +187,15 @@ option(ENABLE_FFMPEG "Enable ffmpeg A/V recording" ${FFMPEG_DEFAULT})
 
 set(ONLINEUPDATES_DEFAULT OFF)
 
-if(WIN32 AND (X64 OR X86))
-    set(ONLINEUPDATES_DEFAULT ON) # use winsparkle
+if((WIN32 AND (X64 OR X86)) OR APPLE) # winsparkle/sparkle
+    set(ONLINEUPDATES_DEFAULT ON)
 endif()
 
 option(ENABLE_ONLINEUPDATES "Enable online update checks" ${ONLINEUPDATES_DEFAULT})
+option(HTTPS "Use https URL for winsparkle" ON)
+if(NOT HTTPS)
+    add_definitions(-DNO_HTTPS)
+endif()
 
 set(LTO_DEFAULT ON)
 
@@ -194,18 +209,18 @@ option(ENABLE_LTO "Compile with Link Time Optimization (gcc and clang only)" ${L
 
 if(WIN32 OR CMAKE_TOOLCHAIN_FILE MATCHES "[Mm][Ii][Nn][Gg][Ww]")
     # Win32 deps submodule
+    set(git_checkout FALSE)
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
+        set(git_checkout TRUE)
+        execute_process(
+            COMMAND git submodule update --init --remote --recursive
+            RESULT_VARIABLE git_status
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        )
+    endif()
+
     if(NOT EXISTS "${CMAKE_SOURCE_DIR}/dependencies/mingw-xaudio/include")
-        set(git_checkout FALSE)
-
-        if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
-            set(git_checkout TRUE)
-            execute_process(
-                COMMAND git submodule update --init --remote --recursive
-                RESULT_VARIABLE git_status
-                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            )
-        endif()
-
         if(NOT (git_checkout AND git_status EQUAL 0))
             message(FATAL_ERROR "Please pull in git submodules, e.g.\nrun: git submodule update --init --remote --recursive")
         endif()
@@ -1008,14 +1023,15 @@ endif()
 
 set(
     HDR_STB_IMAGE
-    headers/stb/stb_image.h
-    headers/stb/stb_image_write.h
+    third_party/include/stb/stb_image.h
+    third_party/include/stb/stb_image_write.h
 )
 
 include_directories(
     ${ZLIB_INCLUDE_DIR}
     fex
     ${SDL2_INCLUDE_DIR}
+    third_party/include/stb
 )
 
 if(ENABLE_FFMPEG)
@@ -1126,3 +1142,5 @@ set(CPACK_PACKAGE_VERSION_MINOR "0")
 set(CPACK_PACKAGE_VERSION_PATCH "0-Git-" ${COMMITHASH})
 list(APPEND CPACK_SOURCE_IGNORE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/dependencies")
 include(CPack)
+
+# vim:sw=4 et tw=0:

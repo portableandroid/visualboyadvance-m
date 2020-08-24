@@ -246,10 +246,10 @@ public:
             bool cld;
 
             if (isgb)
-                cld = gbCheatsLoadCheatList(cheatfn.mb_fn_str());
+                cld = gbCheatsLoadCheatList(UTF8(cheatfn));
             else {
                 if (cheatfn.EndsWith(wxT(".clt"))) {
-                    cld = cheatsLoadCheatList(cheatfn.mb_fn_str());
+                    cld = cheatsLoadCheatList(UTF8(cheatfn));
 
                     if (cld) {
                         *dirty = cheatfn != deffn;
@@ -298,9 +298,9 @@ public:
 
             // note that there is no way to test for succes of save
             if (isgb)
-                gbCheatsSaveCheatList(cheatfn.mb_fn_str());
+                gbCheatsSaveCheatList(UTF8(cheatfn));
             else
-                cheatsSaveCheatList(cheatfn.mb_fn_str());
+                cheatsSaveCheatList(UTF8(cheatfn));
 
             if (cheatfn == deffn)
                 *dirty = false;
@@ -1695,19 +1695,6 @@ public:
     }
 } JoyPadConfigHandler[4];
 
-class JoystickPoller : public wxTimer {
-    public:
-        void Notify() {
-            wxGetApp().frame->PollJoysticks();
-        }
-        void ShowDialog(wxShowEvent& ev) {
-            if (ev.IsShown())
-                Start(50);
-            else
-                Stop();
-        }
-};
-
 // manage fullscreen mode widget
 // technically, it's more than a validator: it modifies the widget as well
 class ScreenModeList : public wxValidator {
@@ -2003,7 +1990,7 @@ static bool treeid_to_name(int id, wxString& name, wxTreeCtrl* tc,
 }
 
 // for sorting accels by command ID
-static bool cmdid_lt(const wxAcceleratorEntry& a, const wxAcceleratorEntry& b)
+static bool cmdid_lt(const wxAcceleratorEntryUnicode& a, const wxAcceleratorEntryUnicode& b)
 {
     return a.GetCommand() < b.GetCommand();
 }
@@ -2015,7 +2002,7 @@ public:
     wxControlWithItems* lb;
     wxAcceleratorEntry_v user_accels, accels;
     wxWindow *asb, *remb;
-    wxKeyTextCtrl* key;
+    wxJoyKeyTextCtrl* key;
     wxControl* curas;
 
     // since this is not the actual dialog, derived from wxDialog, which is
@@ -2076,10 +2063,17 @@ public:
         asb->Enable(!key->GetValue().empty());
         int cmd = id->val;
 
-        for (size_t i = 0; i < accels.size(); i++)
-            if (accels[i].GetCommand() == cmdtab[cmd].cmd_id)
-                lb->Append(wxKeyTextCtrl::ToString(accels[i].GetFlags(),
-                    accels[i].GetKeyCode()));
+        for (size_t i = 0; i < accels.size(); ++i) {
+            if (accels[i].GetCommand() == cmdtab[cmd].cmd_id) {
+                if (accels[i].GetJoystick() == 0) {
+                    wxString key = wxJoyKeyTextCtrl::ToCandidateString(accels[i].GetFlags(), accels[i].GetKeyCode());
+                    lb->Append(key);
+                }
+                else {
+                    lb->Append(accels[i].GetUkey());
+                }
+            }
+        }
     }
 
     // after selecting a key in key list, enable Remove button
@@ -2099,10 +2093,11 @@ public:
             return;
 
         wxString selstr = lb->GetString(lsel);
-        int selmod, selkey;
+        int selmod, selkey, seljoy;
 
-        if (!wxKeyTextCtrl::FromString(selstr, selmod, selkey))
-            return; // this should never happen
+        if (!wxJoyKeyTextCtrl::FromString(selstr, selmod, selkey, seljoy))
+            // this should never happen
+            return;
 
         remb->Enable(false);
 
@@ -2115,7 +2110,9 @@ public:
         // first drop from user accels, if applicable
         for (wxAcceleratorEntry_v::iterator i = user_accels.begin();
              i < user_accels.end(); ++i)
-            if (i->GetFlags() == selmod && i->GetKeyCode() == selkey) {
+            if ((i->GetFlags() == selmod && i->GetKeyCode() == selkey)
+                || (seljoy != 0 && i->GetUkey() == selstr))
+            {
                 user_accels.erase(i);
                 break;
             }
@@ -2124,15 +2121,19 @@ public:
         wxAcceleratorEntry_v& sys_accels = wxGetApp().frame->sys_accels;
 
         for (size_t i = 0; i < sys_accels.size(); i++)
-            if (sys_accels[i].GetFlags() == selmod && sys_accels[i].GetKeyCode() == selkey) {
-                wxAcceleratorEntry ne(selmod, selkey, XRCID("NOOP"));
+            if ((sys_accels[i].GetFlags() == selmod && sys_accels[i].GetKeyCode() == selkey)
+                || (seljoy != 0 && sys_accels[i].GetUkey() == selstr)) // joystick system bindings?
+            {
+                wxAcceleratorEntryUnicode ne(selstr, seljoy, selmod, selkey, XRCID("NOOP"));
                 user_accels.push_back(ne);
             }
 
         // finally, remove from accels instead of recomputing
         for (wxAcceleratorEntry_v::iterator i = accels.begin();
              i < accels.end(); ++i)
-            if (i->GetFlags() == selmod && i->GetKeyCode() == selkey) {
+            if ((i->GetFlags() == selmod && i->GetKeyCode() == selkey)
+                || (seljoy != 0 && i->GetUkey() == selstr))
+            {
                 accels.erase(i);
                 break;
             }
@@ -2164,10 +2165,11 @@ public:
         if (!csel.IsOk() || accel.empty())
             return;
 
-        int acmod, ackey;
+        int acmod, ackey, acjoy;
 
-        if (!wxKeyTextCtrl::FromString(accel, acmod, ackey))
-            return; // this should never happen
+        if (!wxJoyKeyTextCtrl::FromString(accel, acmod, ackey, acjoy))
+            // this should never happen
+            return;
 
         for (unsigned int i = 0; i < lb->GetCount(); i++)
             if (lb->GetString(i) == accel)
@@ -2178,15 +2180,17 @@ public:
         // first drop from user accels, if applicable
         for (wxAcceleratorEntry_v::iterator i = user_accels.begin();
              i < user_accels.end(); ++i)
-            if (i->GetFlags() == acmod && i->GetKeyCode() == ackey) {
+            if ((i->GetFlags() == acmod && i->GetKeyCode() == ackey && i->GetJoystick() != acjoy)
+                || (acjoy != 0 && i->GetUkey() == accel)) {
                 user_accels.erase(i);
                 break;
             }
 
         // then assign to this command
         const TreeInt* id = static_cast<const TreeInt*>(tc->GetItemData(csel));
-        wxAcceleratorEntry ne(acmod, ackey, cmdtab[id->val].cmd_id);
+        wxAcceleratorEntryUnicode ne(accel, acjoy, acmod, ackey, cmdtab[id->val].cmd_id);
         user_accels.push_back(ne);
+
         // now assigned to this cmd...
         wxString lab;
         treeid_to_name(id->val, lab, tc, tc->GetRootItem());
@@ -2207,9 +2211,9 @@ public:
             return;
         }
 
-        int acmod, ackey;
+        int acmod, ackey, acjoy;
 
-        if (!wxKeyTextCtrl::FromString(nkey, acmod, ackey)) {
+        if (!wxJoyKeyTextCtrl::FromString(nkey, acmod, ackey, acjoy)) {
             // this should never happen
             key->SetValue(wxT(""));
             asb->Enable(false);
@@ -2220,7 +2224,8 @@ public:
         int cmd = -1;
 
         for (size_t i = 0; i < accels.size(); i++)
-            if (accels[i].GetFlags() == acmod && accels[i].GetKeyCode() == ackey) {
+            if ((accels[i].GetFlags() == acmod && accels[i].GetKeyCode() == ackey)
+                || (acjoy != 0 && accels[i].GetUkey() == nkey)) {
                 int cmdid = accels[i].GetCommand();
 
                 for (cmd = 0; cmd < ncmds; cmd++)
@@ -2328,7 +2333,7 @@ public:
 
     void DoSetThrottleSel(uint32_t val)
     {
-        if (val <= 600)
+        if (val <= 450)
             thrsel->SetSelection(std::round((double)val / 25));
         else
             thrsel->SetSelection(100 / 25);
@@ -2340,7 +2345,7 @@ public:
         (void)evt; // unused params
         uint32_t val = thrsel->GetSelection() * 25;
 
-        if (val <= 600)
+        if (val <= 450)
             thr->SetValue(val);
         else
             thr->SetValue(100);
@@ -2357,46 +2362,90 @@ public:
     }
 } throttle_ctrl;
 
-// manage speedup key throttle spinctrl/canned setting choice interaction
 static class SpeedupThrottleCtrl_t : public wxEvtHandler {
 public:
     wxSpinCtrl* speedup_throttle_spin;
-    wxChoice* speedup_throttle_sel;
+    wxCheckBox* frame_skip_cb;
 
-    // set speedup_throttle_sel from speedup_throttle
-    void SetSpeedupThrottleSel(wxSpinEvent& evt)
-    {
-        (void)evt; // unused params
-        DoSetSpeedupThrottleSel(speedup_throttle_spin->GetValue());
-    }
-
-    void DoSetSpeedupThrottleSel(uint32_t val)
-    {
-        if (val <= 600 && val != 100) {
-            speedup_throttle_sel->SetSelection(std::round((double)val / 25));
-        }
-        else
-            speedup_throttle_sel->SetSelection(4);
-    }
-
-    // set speedup_throttle from speedup_throttle_sel
     void SetSpeedupThrottle(wxCommandEvent& evt)
     {
-        (void)evt; // unused params
-        uint32_t val = speedup_throttle_sel->GetSelection() * 25;
+        unsigned val = speedup_throttle_spin->GetValue();
 
-        if (val <= 600 && val != 100) {
-            speedup_throttle_spin->SetValue(val);
+        evt.Skip(false);
+
+        if (val == 0) {
+            speedup_throttle            = 0;
+            speedup_frame_skip          = 0;
+            speedup_throttle_frame_skip = false;
+
+            frame_skip_cb->SetValue(false);
+            frame_skip_cb->Disable();
+
+            if (evt.GetEventType() == wxEVT_TEXT)
+                return; // Do not update value if user cleared text box.
         }
-        else
-            speedup_throttle_spin->SetValue(100);
+        else if (val <= 450) {
+            speedup_throttle   = val;
+            speedup_frame_skip = 0;
+
+            frame_skip_cb->SetValue(prev_frame_skip_cb);
+            frame_skip_cb->Enable();
+        }
+        else { // val > 450
+            speedup_throttle            = 100;
+            speedup_throttle_frame_skip = false;
+
+            unsigned rounded = std::round((double)val / 100) * 100;
+
+            speedup_frame_skip = rounded / 100 - 1;
+
+            // Round up or down to the nearest 100%.
+            // For example, when the up/down buttons are pressed on the spin
+            // control.
+            if ((int)(val - rounded) > 0)
+                speedup_frame_skip++;
+            else if ((int)(val - rounded) < 0)
+                speedup_frame_skip--;
+
+            frame_skip_cb->SetValue(true);
+            frame_skip_cb->Disable();
+
+            val = (speedup_frame_skip + 1) * 100;
+        }
+
+        speedup_throttle_spin->SetValue(val);
+    }
+
+    void SetSpeedupFrameSkip(wxCommandEvent& evt)
+    {
+        (void)evt; // Unused param.
+
+        bool checked = frame_skip_cb->GetValue();
+
+        speedup_throttle_frame_skip = prev_frame_skip_cb = checked;
     }
 
     void Init(wxShowEvent& ev)
     {
+        if (speedup_frame_skip != 0) {
+            speedup_throttle_spin->SetValue((speedup_frame_skip + 1) * 100);
+            frame_skip_cb->SetValue(true);
+            frame_skip_cb->Disable();
+        }
+        else {
+            speedup_throttle_spin->SetValue(speedup_throttle);
+            frame_skip_cb->SetValue(speedup_throttle_frame_skip);
+
+            if (speedup_throttle != 0)
+                frame_skip_cb->Enable();
+            else
+                frame_skip_cb->Disable();
+        }
+
         ev.Skip();
-        DoSetSpeedupThrottleSel(speedup_throttle);
     }
+private:
+    bool prev_frame_skip_cb = speedup_throttle_frame_skip;
 } speedup_throttle_ctrl;
 
 /////////////////////////////
@@ -2503,10 +2552,11 @@ wxAcceleratorEntry_v MainFrame::get_accels(wxAcceleratorEntry_v user_accels)
     // silently keep only last defined binding
     // same horribly inefficent O(n*m) search for duplicates as above..
     for (size_t i = 0; i < user_accels.size(); i++) {
-        const wxAcceleratorEntry& ae = user_accels[i];
+        const wxAcceleratorEntryUnicode& ae = user_accels[i];
 
         for (wxAcceleratorEntry_v::iterator e = accels.begin(); e < accels.end(); ++e)
-            if (ae.GetFlags() == e->GetFlags() && ae.GetKeyCode() == e->GetKeyCode()) {
+            if ((ae.GetFlags() == e->GetFlags() && ae.GetKeyCode() == e->GetKeyCode())
+                || (ae.GetJoystick() == e->GetJoystick() && ae.GetUkey() == e->GetUkey())) {
                 accels.erase(e);
                 break;
             }
@@ -2528,9 +2578,12 @@ void MainFrame::set_global_accels()
     // the menus will be added now
 
     // first, zero out menu item on all accels
-    for (size_t i = 0; i < accels.size(); i++)
-        accels[i].Set(accels[i].GetFlags(), accels[i].GetKeyCode(),
-            accels[i].GetCommand());
+    for (size_t i = 0; i < accels.size(); ++i) {
+        accels[i].Set(accels[i].GetUkey(), accels[i].GetJoystick(), accels[i].GetFlags(), accels[i].GetKeyCode(), accels[i].GetCommand());
+        if (accels[i].GetJoystick()) {
+            joy.Add(accels[i].GetJoystick() - 1);
+        }
+    }
 
     // yet another O(n*m) loop.  I really ought to sort the accel arrays
     for (int i = 0; i < ncmds; i++) {
@@ -2539,25 +2592,25 @@ void MainFrame::set_global_accels()
         if (!mi)
             continue;
 
-        // only *last* accelerator is made visible in menu
+        // only *last* accelerator is made visible in menu (non-unicode)
         // and is flagged as such by setting menu item in accel
         // the last is chosen so menu overrides non-menu and user overrides
         // system
         int cmd = cmdtab[i].cmd_id;
+        if (cmd == XRCID("NOOP")) continue;
         int last_accel = -1;
 
-        for (size_t j = 0; j < accels.size(); j++)
+        for (size_t j = 0; j < accels.size(); ++j)
             if (cmd == accels[j].GetCommand())
                 last_accel = j;
 
         if (last_accel >= 0) {
             DoSetAccel(mi, &accels[last_accel]);
-            accels[last_accel].Set(accels[last_accel].GetFlags(),
-                accels[last_accel].GetKeyCode(),
-                accels[last_accel].GetCommand(), mi);
-        } else
+            accels[last_accel].Set(accels[last_accel].GetUkey(), accels[last_accel].GetJoystick(), accels[last_accel].GetFlags(), accels[last_accel].GetKeyCode(), accels[last_accel].GetCommand(), mi);
+        } else {
             // clear out user-cleared menu items
             DoSetAccel(mi, NULL);
+        }
     }
 
     // Finally, install a global accelerator table for any non-menu accels
@@ -2568,7 +2621,7 @@ void MainFrame::set_global_accels()
             len++;
 
     if (len) {
-        wxAcceleratorEntry tab[1000];
+        wxAcceleratorEntryUnicode tab[1000];
 
         for (size_t i = 0, j = 0; i < accels.size(); i++)
             if (!accels[i].GetMenuItem())
@@ -2583,7 +2636,7 @@ void MainFrame::set_global_accels()
 
     // save recent accels
     for (int i = 0; i < 10; i++)
-        recent_accel[i] = wxAcceleratorEntry();
+        recent_accel[i] = wxAcceleratorEntryUnicode();
 
     for (size_t i = 0; i < accels.size(); i++)
         if (accels[i].GetCommand() >= wxID_FILE1 && accels[i].GetCommand() <= wxID_FILE10)
@@ -2819,7 +2872,7 @@ bool MainFrame::BindControls()
                 continue;
 	    }
 #endif
-#if defined(NO_ONLINEUPDATES) || !defined(__WXMSW__)
+#if defined(NO_ONLINEUPDATES)
 	    if (cmdtab[i].cmd_id == XRCID("UpdateEmu"))
 	    {
                 if (mi)
@@ -2878,7 +2931,7 @@ bool MainFrame::BindControls()
                         }
 
                     if (a)
-                        sys_accels.push_back(*a);
+                        sys_accels.push_back(wxAcceleratorEntryUnicode(a));
                     else
                         // strip from label so user isn't confused
                         DoSetAccel(mi, NULL);
@@ -2907,14 +2960,22 @@ bool MainFrame::BindControls()
         // remove this item from the menu completely
         wxMenuItem* gdbmi = XRCITEM("GDBMenu");
         gdbmi->GetMenu()->Remove(gdbmi);
-        gdbmi = NULL;
+        gdbmi = nullptr;
 #endif
 #ifdef NO_LINK
         // remove this item from the menu completely
         wxMenuItem* linkmi = XRCITEM("LinkMenu");
         linkmi->GetMenu()->Remove(linkmi);
-        linkmi = NULL;
+        linkmi = nullptr;
 #endif
+
+#ifdef __WXMAC__
+        // Remove UI Config menu item, because it only has an option that does nothing on mac.
+        wxMenuItem* ui_config_mi = XRCITEM("UIConfigure");
+        ui_config_mi->GetMenu()->Remove(ui_config_mi);
+        ui_config_mi = nullptr;
+#endif
+
 
         // if a recent menu is present, save its location
         wxMenuItem* recentmi = XRCITEM("RecentMenu");
@@ -3408,22 +3469,42 @@ bool MainFrame::BindControls()
                 NULL, &throttle_ctrl);
             d->Fit();
         }
+
         // SpeedUp Key Config
         d = LoadXRCDialog("SpeedupConfig");
         {
-            getsc_uint("SpeedupThrottle", speedup_throttle);
-            getcbb("SpeedupThrottleFrameSkip", speedup_throttle_frame_skip);
-            speedup_throttle_ctrl.speedup_throttle_spin = sc;
-            speedup_throttle_ctrl.speedup_throttle_sel = SafeXRCCTRL<wxChoice>(d, "SpeedupThrottleSel");
-            speedup_throttle_ctrl.speedup_throttle_spin->Connect(wxEVT_COMMAND_SPINCTRL_UPDATED,
-                wxSpinEventHandler(SpeedupThrottleCtrl_t::SetSpeedupThrottleSel),
-                NULL, &speedup_throttle_ctrl);
-            speedup_throttle_ctrl.speedup_throttle_sel->Connect(wxEVT_COMMAND_CHOICE_SELECTED,
+            speedup_throttle_ctrl.frame_skip_cb         = SafeXRCCTRL<wxCheckBox>(d, "SpeedupThrottleFrameSkip");
+            speedup_throttle_ctrl.speedup_throttle_spin = SafeXRCCTRL<wxSpinCtrl>(d, "SpeedupThrottleSpin");
+
+            speedup_throttle_ctrl.speedup_throttle_spin->Connect(wxEVT_SPIN_UP,
                 wxCommandEventHandler(SpeedupThrottleCtrl_t::SetSpeedupThrottle),
                 NULL, &speedup_throttle_ctrl);
+
+            speedup_throttle_ctrl.speedup_throttle_spin->Connect(wxEVT_SPIN_DOWN,
+                wxCommandEventHandler(SpeedupThrottleCtrl_t::SetSpeedupThrottle),
+                NULL, &speedup_throttle_ctrl);
+
+            speedup_throttle_ctrl.speedup_throttle_spin->Connect(wxEVT_SPIN,
+                wxCommandEventHandler(SpeedupThrottleCtrl_t::SetSpeedupThrottle),
+                NULL, &speedup_throttle_ctrl);
+
+            speedup_throttle_ctrl.speedup_throttle_spin->Connect(wxEVT_TEXT,
+                wxCommandEventHandler(SpeedupThrottleCtrl_t::SetSpeedupThrottle),
+                NULL, &speedup_throttle_ctrl);
+
+            speedup_throttle_ctrl.frame_skip_cb->Connect(wxEVT_CHECKBOX,
+                wxCommandEventHandler(SpeedupThrottleCtrl_t::SetSpeedupFrameSkip),
+                NULL, &speedup_throttle_ctrl);
+
             d->Connect(wxEVT_SHOW, wxShowEventHandler(SpeedupThrottleCtrl_t::Init),
                 NULL, &speedup_throttle_ctrl);
+
             d->Fit();
+        }
+
+        d = LoadXRCDialog("UIConfig");
+        {
+            getcbb("HideMenuBar", gopts.hide_menu_bar);
         }
 #define getcbbe(n, o) getbe(n, o, cb, wxCheckBox, CB)
         wxBoolIntEnValidator* bienval;
@@ -3758,13 +3839,6 @@ bool MainFrame::BindControls()
                     NULL, &JoyPadConfigHandler[i]);
             }
 
-            // poll the joystick
-            JoystickPoller* jpoll = new JoystickPoller();
-
-            joyDialog->Connect(wxID_ANY, wxEVT_SHOW,
-                wxShowEventHandler(JoystickPoller::ShowDialog),
-                jpoll, jpoll);
-
             joyDialog->Fit();
         }
 
@@ -3788,7 +3862,7 @@ bool MainFrame::BindControls()
             accel_config_handler.lb = lb;
             accel_config_handler.asb = SafeXRCCTRL<wxButton>(d, "Assign");
             accel_config_handler.remb = SafeXRCCTRL<wxButton>(d, "Remove");
-            accel_config_handler.key = SafeXRCCTRL<wxKeyTextCtrl>(d, "Shortcut");
+            accel_config_handler.key = SafeXRCCTRL<wxJoyKeyTextCtrl>(d, "Shortcut");
             accel_config_handler.curas = SafeXRCCTRL<wxControl>(d, "AlreadyThere");
             accel_config_handler.key->MoveBeforeInTabOrder(accel_config_handler.asb);
             accel_config_handler.key->SetMultikey(0);

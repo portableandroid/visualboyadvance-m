@@ -16,13 +16,13 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 extern "C" {
-#include "../headers/stb/stb_image.h"
+#include "stb_image.h"
 }
 
 #define STBI_MSC_SECURE_CRT
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 extern "C" {
-#include "../headers/stb/stb_image_write.h"
+#include "stb_image_write.h"
 }
 
 #include "NLS.h"
@@ -70,6 +70,45 @@ bool FileExists(const char *filename)
         struct stat buffer;
         return (stat(filename, &buffer) == 0);
 #endif
+}
+
+#ifdef _WIN32
+#include <windows.h>
+
+wchar_t* utf8ToUtf16(const char *utf8)
+{
+    wchar_t *utf16 = nullptr;
+    size_t size = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL , 0);
+    if (size == 0) return nullptr; // error
+    utf16 = new wchar_t[size];
+    size = MultiByteToWideChar(CP_UTF8, 0, utf8 , -1, utf16, size);
+    if (size == 0) {
+        delete[] utf16;
+        return nullptr; // error
+    }
+    return utf16;
+}
+#endif // _WIN32
+
+FILE* utilOpenFile(const char *filename, const char *mode)
+{
+    FILE *f = NULL;
+#ifdef _WIN32
+    wchar_t *wfilename = utf8ToUtf16(filename);
+    if (!wfilename) return nullptr;
+    wchar_t *wmode = utf8ToUtf16(mode);
+    if (!wmode) {
+        delete[] wfilename;
+        return nullptr;
+    }
+
+    f = _wfopen(wfilename, wmode);
+    delete[] wfilename;
+    delete[] wmode;
+#else
+    f = fopen(filename, mode);
+#endif // _WIN32
+    return f;
 }
 
 // Get user-specific config dir manually.
@@ -191,7 +230,7 @@ void utilReadScreenPixels(uint8_t *dest, int w, int h)
 
 bool utilWritePNGFile(const char *fileName, int w, int h, uint8_t *pix)
 {
-        uint8_t writeBuffer[512 * CHANNEL_NUM];
+        uint8_t *writeBuffer = new uint8_t[w * h * CHANNEL_NUM];
 
         uint8_t *b = writeBuffer;
 
@@ -212,7 +251,6 @@ bool utilWritePNGFile(const char *fileName, int w, int h, uint8_t *pix)
                             }
                             p++; // skip black pixel for filters
                             p++; // skip black pixel for filters
-                            b = writeBuffer;
                     }
             } break;
             case 24: {
@@ -233,7 +271,6 @@ bool utilWritePNGFile(const char *fileName, int w, int h, uint8_t *pix)
                                             *b++ = blue;
                                     }
                             }
-                            b = writeBuffer;
                     }
             } break;
             case 32: {
@@ -247,12 +284,13 @@ bool utilWritePNGFile(const char *fileName, int w, int h, uint8_t *pix)
                                     *b++ = ((v >> systemBlueShift) & 0x001f) << 3;  // B
                             }
                             pixU32++;
-                            b = writeBuffer;
                     }
             } break;
         }
 
-        return (0 != stbi_write_png(fileName, w, h, CHANNEL_NUM, writeBuffer, w * CHANNEL_NUM));
+        bool ret = (0 != stbi_write_png(fileName, w, h, CHANNEL_NUM, writeBuffer, w * CHANNEL_NUM));
+        delete[] writeBuffer;
+        return ret;
 }
 
 void utilPutDword(uint8_t *p, uint32_t value)
@@ -504,10 +542,6 @@ static bool utilIsImage(const char *file)
         return utilIsGBAImage(file) || utilIsGBImage(file);
 }
 
-#ifdef WIN32
-#include <windows.h>
-#endif
-
 IMAGE_TYPE utilFindType(const char *file, char (&buffer)[2048]);
 
 IMAGE_TYPE utilFindType(const char *file)
@@ -590,7 +624,7 @@ uint8_t *utilLoad(const char *file, bool (*accept)(const char *), uint8_t *data,
 
         if (size > MAX_CART_SIZE)
                 return NULL;
-        
+
         uint8_t *image = data;
 
         if (image == NULL) {
@@ -722,6 +756,19 @@ void utilWriteData(gzFile gzFile, variable_desc *data)
         }
 }
 
+gzFile utilAutoGzOpen(const char *file, const char *mode)
+{
+#ifdef _WIN32
+        wchar_t *wfile = utf8ToUtf16(file);
+        if (!wfile) return nullptr;
+        gzFile handler = gzopen_w(wfile, mode);
+        delete[] wfile;
+        return handler;
+#else
+        return gzopen(file, mode);
+#endif
+}
+
 gzFile utilGzOpen(const char *file, const char *mode)
 {
         utilGzWriteFunc = (int(ZEXPORT *)(gzFile, void *const, unsigned int))gzwrite;
@@ -729,7 +776,7 @@ gzFile utilGzOpen(const char *file, const char *mode)
         utilGzCloseFunc = gzclose;
         utilGzSeekFunc = gzseek;
 
-        return gzopen(file, mode);
+        return utilAutoGzOpen(file, mode);
 }
 
 gzFile utilMemGzOpen(char *memory, int available, const char *mode)

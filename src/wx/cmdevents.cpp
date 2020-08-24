@@ -856,7 +856,7 @@ EVT_HANDLER_MASK(SetLoadingDotCodeFile, "Load e-Reader Dot Code...", CMDEN_GBA)
         return;
 
     loaddotcodefile_path = dlg.GetPath();
-    SetLoadDotCodeFile(loaddotcodefile_path.mb_str());
+    SetLoadDotCodeFile(UTF8(loaddotcodefile_path));
 }
 
 EVT_HANDLER_MASK(ResetSavingDotCodeFile, "Reset Saving e-Reader Dot Code", CMDEN_GBA)
@@ -878,7 +878,7 @@ EVT_HANDLER_MASK(SetSavingDotCodeFile, "Save e-Reader Dot Code...", CMDEN_GBA)
         return;
 
     savedotcodefile_path = dlg.GetPath();
-    SetSaveDotCodeFile(savedotcodefile_path.mb_str());
+    SetSaveDotCodeFile(UTF8(savedotcodefile_path));
 }
 
 static wxString batimp_path;
@@ -903,10 +903,10 @@ EVT_HANDLER_MASK(ImportBatteryFile, "Import battery file...", CMDEN_GB | CMDEN_G
     if (ret == wxYES) {
         wxString msg;
 
-        if (panel->emusys->emuReadBattery(fn.mb_fn_str()))
-            msg.Printf(_("Loaded battery %s"), fn.c_str());
+        if (panel->emusys->emuReadBattery(UTF8(fn)))
+            msg.Printf(_("Loaded battery %s"), fn.wc_str());
         else
-            msg.Printf(_("Error loading battery %s"), fn.c_str());
+            msg.Printf(_("Error loading battery %s"), fn.wc_str());
 
         systemScreenMessage(msg);
     }
@@ -936,7 +936,7 @@ EVT_HANDLER_MASK(ImportGamesharkCodeFile, "Import GameShark code file...", CMDEN
             // FIXME: this routine will not work on big-endian systems
             // if the underlying file format is little-endian
             // (fix in gb/gbCheats.cpp)
-            res = gbCheatReadGSCodeFile(fn.mb_fn_str());
+            res = gbCheatReadGSCodeFile(UTF8(fn));
         else {
             // need to select game first
             wxFFile f(fn, wxT("rb"));
@@ -1018,13 +1018,13 @@ EVT_HANDLER_MASK(ImportGamesharkCodeFile, "Import GameShark code file...", CMDEN
             // FIXME: this routine will not work on big-endian systems
             // if the underlying file format is little-endian
             // (fix in gba/Cheats.cpp)
-            res = cheatsImportGSACodeFile(fn.mb_fn_str(), game, v3);
+            res = cheatsImportGSACodeFile(UTF8(fn), game, v3);
         }
 
         if (res)
-            msg.Printf(_("Loaded code file %s"), fn.c_str());
+            msg.Printf(_("Loaded code file %s"), fn.wc_str());
         else
-            msg.Printf(_("Error loading code file %s"), fn.c_str());
+            msg.Printf(_("Error loading code file %s"), fn.wc_str());
 
         systemScreenMessage(msg);
     }
@@ -1053,7 +1053,7 @@ EVT_HANDLER_MASK(ImportGamesharkActionReplaySnapshot,
         bool res;
 
         if (panel->game_type() == IMAGE_GB)
-            res = gbReadGSASnapshot(fn.mb_fn_str());
+            res = gbReadGSASnapshot(UTF8(fn));
         else {
             bool gsv = fn.size() >= 4 && wxString(fn.substr(fn.size() - 4)).IsSameAs(wxT(".gsv"), false);
 
@@ -1061,18 +1061,18 @@ EVT_HANDLER_MASK(ImportGamesharkActionReplaySnapshot,
                 // FIXME: this will fail on big-endian machines if
                 // file format is little-endian
                 // fix in GBA.cpp
-                res = CPUReadGSASPSnapshot(fn.mb_fn_str());
+                res = CPUReadGSASPSnapshot(UTF8(fn));
             else
                 // FIXME: this will fail on big-endian machines if
                 // file format is little-endian
                 // fix in GBA.cpp
-                res = CPUReadGSASnapshot(fn.mb_fn_str());
+                res = CPUReadGSASnapshot(UTF8(fn));
         }
 
         if (res)
-            msg.Printf(_("Loaded snapshot file %s"), fn.c_str());
+            msg.Printf(_("Loaded snapshot file %s"), fn.wc_str());
         else
-            msg.Printf(_("Error loading snapshot file %s"), fn.c_str());
+            msg.Printf(_("Error loading snapshot file %s"), fn.wc_str());
 
         systemScreenMessage(msg);
     }
@@ -1094,10 +1094,10 @@ EVT_HANDLER_MASK(ExportBatteryFile, "Export battery file...", CMDEN_GB | CMDEN_G
     wxString fn = dlg.GetPath();
     wxString msg;
 
-    if (panel->emusys->emuWriteBattery(fn.mb_fn_str()))
-        msg.Printf(_("Wrote battery %s"), fn.c_str());
+    if (panel->emusys->emuWriteBattery(UTF8(fn)))
+        msg.Printf(_("Wrote battery %s"), fn.wc_str());
     else
-        msg.Printf(_("Error writing battery %s"), fn.c_str());
+        msg.Printf(_("Error writing battery %s"), fn.wc_str());
 
     systemScreenMessage(msg);
 }
@@ -1138,9 +1138,9 @@ EVT_HANDLER_MASK(ExportGamesharkSnapshot, "Export GameShark snapshot...", CMDEN_
     // fix in GBA.cpp
     if (CPUWriteGSASnapshot(fn.utf8_str(), tit->GetValue().utf8_str(),
             dsc->GetValue().utf8_str(), n->GetValue().utf8_str()))
-        msg.Printf(_("Saved snapshot file %s"), fn.c_str());
+        msg.Printf(_("Saved snapshot file %s"), fn.wc_str());
     else
-        msg.Printf(_("Error saving snapshot file %s"), fn.c_str());
+        msg.Printf(_("Error saving snapshot file %s"), fn.wc_str());
 
     systemScreenMessage(msg);
 }
@@ -1175,12 +1175,12 @@ EVT_HANDLER_MASK(ScreenCapture, "Screen capture...", CMDEN_GB | CMDEN_GBA)
     }
 
     if (fmt == 0)
-        panel->emusys->emuWritePNG(fn.mb_fn_str());
+        panel->emusys->emuWritePNG(UTF8(fn));
     else
-        panel->emusys->emuWriteBMP(fn.mb_fn_str());
+        panel->emusys->emuWriteBMP(UTF8(fn));
 
     wxString msg;
-    msg.Printf(_("Wrote snapshot %s"), fn.c_str());
+    msg.Printf(_("Wrote snapshot %s"), fn.wc_str());
     systemScreenMessage(msg);
 }
 
@@ -2208,7 +2208,7 @@ void MainFrame::GDBBreak()
                 if (!debugOpenPty())
                     return;
 
-                msg.Printf(_("Waiting for connection at %s"), debugGetSlavePty().c_str());
+                msg.Printf(_("Waiting for connection at %s"), debugGetSlavePty().wc_str());
             } else
 #endif
             {
@@ -2321,6 +2321,24 @@ EVT_HANDLER(GeneralConfigure, "General options...")
 EVT_HANDLER(SpeedupConfigure, "Speedup / Turbo options...")
 {
     wxDialog* dlg = GetXRCDialog("SpeedupConfig");
+
+    unsigned save_speedup_throttle            = speedup_throttle;
+    unsigned save_speedup_frame_skip          = speedup_frame_skip;
+    bool     save_speedup_throttle_frame_skip = speedup_throttle_frame_skip;
+
+    if (ShowModal(dlg) == wxID_OK)
+        update_opts();
+    else {
+        // Restore values if cancel pressed.
+        speedup_throttle            = save_speedup_throttle;
+        speedup_frame_skip          = save_speedup_frame_skip;
+        speedup_throttle_frame_skip = save_speedup_throttle_frame_skip;
+    }
+}
+
+EVT_HANDLER(UIConfigure, "UI Settings...")
+{
+    wxDialog* dlg = GetXRCDialog("UIConfig");
 
     if (ShowModal(dlg) == wxID_OK)
         update_opts();
@@ -2688,11 +2706,17 @@ EVT_HANDLER(EmulatorDirectories, "Directories...")
 EVT_HANDLER(JoypadConfigure, "Joypad options...")
 {
     wxDialog* dlg = GetXRCDialog("JoypadConfig");
-    joy.Attach(NULL);
     joy.Add();
+
+    auto frame = wxGetApp().frame;
+    bool joy_timer = frame->IsJoyPollTimerRunning();
+
+    if (!joy_timer) frame->StartJoyPollTimer();
 
     if (ShowModal(dlg) == wxID_OK)
         update_opts();
+
+    if (!joy_timer) frame->StopJoyPollTimer();
 
     SetJoystick();
 }
@@ -2700,24 +2724,30 @@ EVT_HANDLER(JoypadConfigure, "Joypad options...")
 EVT_HANDLER(Customize, "Customize UI...")
 {
     wxDialog* dlg = GetXRCDialog("AccelConfig");
+    joy.Add();
+
+    auto frame = wxGetApp().frame;
+    bool joy_timer = frame->IsJoyPollTimerRunning();
+
+    if (!joy_timer) frame->StartJoyPollTimer();
 
     if (ShowModal(dlg) == wxID_OK)
         update_opts();
+
+    if (!joy_timer) frame->StopJoyPollTimer();
+
+    SetJoystick();
 }
 
 #ifndef NO_ONLINEUPDATES
-#ifdef __WXMSW__
-#include "winsparkle-wrapper.h"
-#endif
-#endif
+#include "autoupdater/autoupdater.h"
+#endif // NO_ONLINEUPDATES
 
 EVT_HANDLER(UpdateEmu, "Check for updates...")
 {
 #ifndef NO_ONLINEUPDATES
-#ifdef __WXMSW__
-    win_sparkle_check_update_with_ui();
-#endif
-#endif
+    checkUpdatesUi();
+#endif // NO_ONLINEUPDATES
 }
 
 EVT_HANDLER(FactoryReset, "Factory Reset...")
@@ -2818,6 +2848,13 @@ EVT_HANDLER(Bilinear, "Use bilinear filter with 3d renderer")
 EVT_HANDLER(RetainAspect, "Retain aspect ratio when resizing")
 {
     GetMenuOptionBool("RetainAspect", gopts.retain_aspect);
+
+    // Force new panel with new aspect ratio options.
+    if (panel->panel) {
+        panel->panel->Destroy();
+        panel->panel = nullptr;
+    }
+
     update_opts();
 }
 
@@ -3047,6 +3084,9 @@ void SetLinkTypeMenu(const char* type, int value)
     mf->SetMenuOption(type, 1);
     gopts.gba_link_type = value;
     update_opts();
+#ifndef NO_LINK
+    CloseLink();
+#endif
     mf->EnableNetworkMenu();
 }
 
